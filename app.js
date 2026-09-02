@@ -393,6 +393,7 @@ function addMealRecord(name, calNum, category) {
   state.meals.push({ id: uid(), category, name, calories: calNum, date: todayKey() });
   saveState();
   render();
+  triggerScreenGlow('meal');
   showMascot('smile', pickLine(category === '間食' ? 'mealSnackAdd' : 'mealNormalAdd'));
 }
 
@@ -604,6 +605,7 @@ function attachEvents() {
       state.workoutLogs.push(log);
       saveState();
       render();
+      triggerScreenGlow('workout');
       showMascot('smile', pickLine('workoutAdd'));
     });
   }
@@ -741,4 +743,18 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   });
+}
+function triggerScreenGlow(type) {
+  let overlay = document.getElementById('screen-glow-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'screen-glow-overlay';
+    overlay.className = 'screen-glow-overlay';
+    document.body.appendChild(overlay);
+  }
+
+  // クラスを付け直してアニメーションを毎回最初から再生させる
+  overlay.className = 'screen-glow-overlay';
+  void overlay.offsetWidth; // リフロー強制
+  overlay.classList.add(type === 'workout' ? 'glow-workout' : 'glow-meal');
 }
