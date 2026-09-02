@@ -1,17 +1,25 @@
-const CACHE_NAME = 'fitness-app-v3';
+const CACHE_NAME = 'fitness-app-v4';
 const ASSETS = [
-  './',
-  './index.html',
-  './style.css',
-  './app.js',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png'
+  'index.html',
+  'style.css',
+  'app.js',
+  'manifest.json',
+  'icon-192.png',
+  'icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
+    caches.open(CACHE_NAME).then(async (cache) => {
+      // 1つ失敗しても全体が落ちないよう個別に追加
+      for (const asset of ASSETS) {
+        try {
+          await cache.add(asset);
+        } catch (err) {
+          console.warn('キャッシュ失敗:', asset, err);
+        }
+      }
+    })
   );
   self.skipWaiting();
 });
@@ -30,6 +38,9 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(event.request).then((cached) => {
       return cached || fetch(event.request).then((res) => {
+        if (!res || res.status !== 200 || res.type !== 'basic') {
+          return res;
+        }
         const resClone = res.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));
         return res;
