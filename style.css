@@ -38,13 +38,12 @@ html, body {
 }
 
 .topbar {
-  padding: 20px 20px 8px;
+  padding: max(20px, env(safe-area-inset-top)) 20px 8px;
   position: sticky;
   top: 0;
   background: var(--bg);
   z-index: 5;
 }
-
 .topbar .date {
   font-size: 13px;
   color: var(--text-secondary);
