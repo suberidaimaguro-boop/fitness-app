@@ -657,3 +657,25 @@ button.secondary {
   border-color: #ffffff;
   transform: scale(1.1);
 }
+/* ---- iPhoneの自動ズーム防止 (16px以上にする) ---- */
+input[type="text"],
+input[type="number"],
+input[type="date"],
+select {
+  font-size: 16px !important;
+}
+/* ---- BMI詳細アドバイスカード ---- */
+.bmi-detail-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-top: -8px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.bmi-detail-box strong {
+  color: var(--gold);
+}
