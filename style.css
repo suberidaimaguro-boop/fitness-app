@@ -553,3 +553,64 @@ button.secondary {
     transform: scale(1);
   }
 }
+/* ---- アコーディオン ---- */
+.accordion-toggle {
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+/* ---- Have To リスト ---- */
+.haveto-wrap {
+  margin-top: 20px;
+}
+.haveto-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.haveto-item:last-child {
+  border-bottom: none;
+}
+.haveto-item.done span {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.haveto-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--gold);
+}
+
+/* ---- カラーパレット ---- */
+.color-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.color-swatch-btn {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+.color-swatch-btn.active {
+  border-color: #ffffff;
+  transform: scale(1.1);
+}
