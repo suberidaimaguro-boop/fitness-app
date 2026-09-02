@@ -158,16 +158,44 @@ function previousBestWeight(exerciseId) {
   return weights.length === 0 ? null : Math.max(...weights);
 }
 
+/* ===== BMI & 診断アドバイス計算 ===== */
 function calculateBMI(heightCm, weightKg) {
   if (!heightCm || !weightKg || heightCm <= 0 || weightKg <= 0) return null;
   const hM = heightCm / 100;
   const bmi = weightKg / (hM * hM);
+  const standardWeight = (22 * hM * hM).toFixed(1); // 適正体重(BMI 22)
+  const diffStandard = (weightKg - standardWeight).toFixed(1);
+
   let category = '';
-  if (bmi < 18.5) category = '低体重(痩せ)';
-  else if (bmi < 25) category = '普通体重';
-  else if (bmi < 30) category = '肥満(1度)';
-  else category = '肥満(2度以上)';
-  return { val: bmi.toFixed(1), category };
+  let advice = '';
+
+  if (bmi < 18.5) {
+    category = '低体重 (痩せ型)';
+    const normalMin = (18.5 * hM * hM).toFixed(1);
+    const toGain = (normalMin - weightKg).toFixed(1);
+    advice = `適正体重は <strong>${standardWeight}kg</strong> です。普通体重の基準まであと <strong>+${toGain}kg</strong> です。しっかり栄養を摂って筋肉量を増やしていきましょう！`;
+  } else if (bmi < 25) {
+    category = '普通体重 (標準)';
+    if (Math.abs(diffStandard) <= 1.5) {
+      advice = `適正体重（<strong>${standardWeight}kg</strong>）に非常に近いです！理想的なバランスをキープできています。今のペースを続けましょう！`;
+    } else if (diffStandard > 0) {
+      advice = `適正体重（BMI 22）の <strong>${standardWeight}kg</strong> まであと <strong>-${diffStandard}kg</strong> です。健康的な標準体型を維持できています！`;
+    } else {
+      advice = `適正体重（BMI 22）の <strong>${standardWeight}kg</strong> まであと <strong>+${Math.abs(diffStandard)}kg</strong> です。健康的な標準体型です！`;
+    }
+  } else if (bmi < 30) {
+    category = '肥満 (1度)';
+    const normalMax = (24.9 * hM * hM).toFixed(1);
+    const toLose = (weightKg - normalMax).toFixed(1);
+    advice = `普通体重の上限（${normalMax}kg）まであと <strong>-${toLose}kg</strong> の減量が必要です。適正体重（BMI 22）は <strong>${standardWeight}kg</strong> です。少しずつ摂取カロリーを見直していきましょう！`;
+  } else {
+    category = '肥満 (2度以上)';
+    const normalMax = (24.9 * hM * hM).toFixed(1);
+    const toLose = (weightKg - normalMax).toFixed(1);
+    advice = `普通体重の上限まであと <strong>-${toLose}kg</strong>、適正体重までは <strong>-${diffStandard}kg</strong> です。焦らず筋トレと食事改善をコツコツ進めていきましょう！`;
+  }
+
+  return { val: bmi.toFixed(1), category, advice, standardWeight };
 }
 
 /* ===== マスコット ===== */
@@ -217,7 +245,11 @@ const MASCOT_LINES = {
   workoutAdd: ['頑張っててえらいぞ!', 'ナイスセット!その調子!'],
   mealSnackAdd: ['もう、食べすぎたらダメだぞ!', '間食はほどほどにね…'],
   mealNormalAdd: ['ちゃんと記録できてえらい!', 'いいね、その調子!'],
-  workoutPR: ['自己ベスト更新、すごいじゃん!']
+  workoutPR: ['自己ベスト更新、すごいじゃん!'],
+  mealOverAngry: [
+    'ちょっと!カロリー上限オーバーしてるじゃん!もう今日はこれ以上食べちゃダメだぞ!',
+    'おいおい食べすぎ注意報発令!目標超えちゃったんだから、明日はしっかり調整するんだぞ!'
+  ]
 };
 
 function greetingPrefix() {
@@ -266,6 +298,30 @@ function renderMascot() {
       renderMascot();
     });
   }
+}
+
+async function fetchGeminiComment(prompt) {
+  const apiKey = state.settings.geminiApiKey;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function personaInstruction() {
+  const name = (state.settings.userName || '').trim();
+  const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
+  const nameNote = name ? `ユーザーの名前は「${name}」です。「${name}${h}」と呼んでください。` : '';
+  return `あなたは筋トレ・食事管理アプリの応援キャラです。口調はタメ口寄りのフランクで元気なノリにしてください(「〜だよ」ではなく「〜だぞ!」「〜じゃん!」)。${nameNote}`;
 }
 
 /* ===== ルーター ===== */
@@ -396,12 +452,26 @@ function renderWorkout() {
 let selectedMealCategory = '朝食';
 const MEAL_CATEGORIES = ['朝食', '昼食', '間食', '夜ご飯'];
 
-function addMealRecord(name, calNum, category) {
+async function addMealRecord(name, calNum, category) {
+  const target = state.goals.dailyCalorieTarget;
+  const beforeTotal = currentCalorieTotal();
+  const afterTotal = beforeTotal + calNum;
+
   state.meals.push({ id: uid(), category, name, calories: calNum, date: activeLogDate });
   saveState();
   render();
   triggerScreenGlow('meal');
-  showMascot('smile', pickLine(category === '間食' ? 'mealSnackAdd' : 'mealNormalAdd'));
+
+  // 目標カロリーを超えたら怒る (AIまたは定型)
+  if (target > 0 && afterTotal > target) {
+    showMascot('angry', 'カロリーオーバー確認中…', false);
+    const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。ちょっと怒りながらも愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
+    showMascot('angry', aiText || pickLine('mealOverAngry'));
+  } else if (category === '間食') {
+    showMascot('angry', pickLine('mealSnackAdd'));
+  } else {
+    showMascot('smile', pickLine('mealNormalAdd'));
+  }
 }
 
 function renderMeal() {
@@ -516,7 +586,7 @@ function renderHistory() {
   `;
 }
 
-/* ===== 描画: 設定 (ご指定順に再構成) ===== */
+/* ===== 描画: 設定 (BMI詳細アドバイス追加) ===== */
 function renderSettings() {
   const activeSet = getActiveSet();
   const bmiData = calculateBMI(state.settings.bodyHeightCm, state.settings.bodyWeightKg);
@@ -538,6 +608,8 @@ function renderSettings() {
       <span class="label" style="margin:0;"><i class="ti ti-calculator"></i> 現在のBMI</span>
       <span class="value gold">${bmiData ? `${bmiData.val} <span class="unit">(${bmiData.category})</span>` : '<span class="sub">身長・体重を入力で計算</span>'}</span>
     </div>
+    ${bmiData ? `<div class="bmi-detail-box">💡 ${bmiData.advice}</div>` : ''}
+
     <button class="primary" id="save-profile-btn" style="margin-bottom:20px;">基本情報を保存</button>
 
     <!-- 2. 目標設定 -->
@@ -546,7 +618,7 @@ function renderSettings() {
     <div class="field"><label>1日のカロリー上限 (kcal)</label><input type="number" id="goal-calories" value="${state.goals.dailyCalorieTarget}"></div>
     <button class="primary" id="save-goals-btn" style="margin-bottom:20px;">目標を保存</button>
 
-    <!-- 3. 種目設定 (格納式) -->
+    <!-- 3. 種目設定 -->
     <p class="section-title">種目設定</p>
     <div class="field"><label>新しい種目を追加</label><input type="text" id="new-exercise-name" placeholder="プランク"></div>
     <button class="primary" id="save-exercise-btn" style="margin-bottom:12px;">種目を追加</button>
@@ -557,7 +629,7 @@ function renderSettings() {
     </button>
     ${exerciseListOpen ? `<div class="list-card" style="margin-bottom:20px;">${exerciseRows || `<div class="empty-hint">まだ種目がありません</div>`}</div>` : ''}
 
-    <!-- 4. キャラクター設定 (敬称はこちらへお引越し) -->
+    <!-- 4. キャラクター設定 -->
     <p class="section-title">キャラクター設定</p>
     <div class="list-card" style="padding:4px 16px; margin-bottom:16px;">
       <div class="toggle-row">
@@ -596,9 +668,12 @@ function renderSettings() {
         </div>`).join('')}
     </div>
 
-    <!-- 5. アプリの配色設定 (格納式・確実に見える微調整ボタン) -->
+    <p class="section-title">AI設定 (任意)</p>
+    <div class="field"><label>Gemini APIキー</label><input type="text" id="gemini-api-key" value="${escapeHtml(state.settings.geminiApiKey || '')}" placeholder="AIキーを入力"></div>
+    <button class="primary" id="save-api-key-btn" style="margin-bottom:20px;">APIキーを保存</button>
+
+    <!-- 5. 配色設定 -->
     <p class="section-title">アプリの配色設定</p>
-    
     <button type="button" class="accordion-toggle" id="accent-toggle-btn">
       <span><i class="ti ti-palette"></i> アクセント色設定 (ボタン・数値)</span>
       <i class="ti ${themeAccentOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
@@ -729,7 +804,7 @@ function attachEvents() {
   }
   const addSetBtn = document.getElementById('add-set-btn');
   if (addSetBtn) {
-    addSetBtn.addEventListener('click', () => {
+    addSetBtn.addEventListener('click', async () => {
       const ex = state.exercises.find(e => e.id === selectedExerciseId);
       const log = { id: uid(), exerciseId: ex.id, date: activeLogDate };
       if (ex.trackWeight) log.weight = Number(document.getElementById('input-weight').value) || 0;
@@ -741,8 +816,15 @@ function attachEvents() {
       saveState();
       render();
       triggerScreenGlow('workout');
+
       const isPR = ex.trackWeight && prevBest !== null && log.weight > prevBest;
-      showMascot('smile', pickLine(isPR ? 'workoutPR' : 'workoutAdd'));
+      if (isPR) {
+        showMascot('smile', '自己ベスト更新中…!', false);
+        const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`);
+        showMascot('smile', aiText || pickLine('workoutPR'));
+      } else {
+        showMascot('smile', pickLine('workoutAdd'));
+      }
     });
   }
   document.querySelectorAll('[data-delete-workout-log]').forEach(btn => {
@@ -950,6 +1032,16 @@ function attachEvents() {
       state.goals.dailyCalorieTarget = Number(document.getElementById('goal-calories').value) || 0;
       saveState();
       alert('目標を保存しました');
+    });
+  }
+
+  // ---- 設定: APIキー ----
+  const saveApiKeyBtn = document.getElementById('save-api-key-btn');
+  if (saveApiKeyBtn) {
+    saveApiKeyBtn.addEventListener('click', () => {
+      state.settings.geminiApiKey = document.getElementById('gemini-api-key').value.trim();
+      saveState();
+      alert('APIキーを保存しました');
     });
   }
 
