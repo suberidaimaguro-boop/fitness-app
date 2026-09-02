@@ -26,6 +26,7 @@ function defaultState() {
       geminiApiKey: '',
       userName: '',
       honorific: 'さん',
+      bodyHeightCm: null,
       bodyWeightKg: null,
       mascotEnabled: true,
       activeMascotSetId: 'set_default',
@@ -51,6 +52,7 @@ function loadState() {
       if (parsed.settings.honorific === undefined) parsed.settings.honorific = 'さん';
       if (!parsed.settings.themeAccent) parsed.settings.themeAccent = '#d4a373';
       if (!parsed.settings.themeBg) parsed.settings.themeBg = '#121212';
+      if (parsed.settings.bodyHeightCm === undefined) parsed.settings.bodyHeightCm = null;
       if (!parsed.haveToList || parsed.haveToList.date !== todayKey()) {
         parsed.haveToList = { date: todayKey(), items: [] };
       }
@@ -81,6 +83,9 @@ function todayKey() {
 
 let activeLogDate = todayKey();
 let favListOpen = false;
+let exerciseListOpen = false;
+let themeAccentOpen = false;
+let themeBgOpen = false;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -151,6 +156,18 @@ function computeAchievementRate() { return computeAchievementRateForDate(todayKe
 function previousBestWeight(exerciseId) {
   const weights = state.workoutLogs.filter(l => l.exerciseId === exerciseId && typeof l.weight === 'number').map(l => l.weight);
   return weights.length === 0 ? null : Math.max(...weights);
+}
+
+function calculateBMI(heightCm, weightKg) {
+  if (!heightCm || !weightKg || heightCm <= 0 || weightKg <= 0) return null;
+  const hM = heightCm / 100;
+  const bmi = weightKg / (hM * hM);
+  let category = '';
+  if (bmi < 18.5) category = '低体重(痩せ)';
+  else if (bmi < 25) category = '普通体重';
+  else if (bmi < 30) category = '肥満(1度)';
+  else category = '肥満(2度以上)';
+  return { val: bmi.toFixed(1), category };
 }
 
 /* ===== マスコット ===== */
@@ -258,7 +275,7 @@ function setTab(tab) {
   render();
 }
 
-/* ===== 描画: ホーム (Have To リスト追加) ===== */
+/* ===== 描画: ホーム ===== */
 function renderHome() {
   const rate = computeAchievementRate();
   const circumference = 2 * Math.PI * 68;
@@ -301,7 +318,6 @@ function renderHome() {
       <span class="value gold" style="font-size:20px;">${streak}日</span>
     </div>
 
-    <!-- Have To リスト -->
     <div class="haveto-wrap">
       <p class="section-title">今日の Have To リスト (明日自動リセット)</p>
       <div class="field" style="margin-bottom:8px;">
@@ -376,7 +392,7 @@ function renderWorkout() {
   `;
 }
 
-/* ===== 描画: 食事 (アコーディオン化) ===== */
+/* ===== 描画: 食事 ===== */
 let selectedMealCategory = '朝食';
 const MEAL_CATEGORIES = ['朝食', '昼食', '間食', '夜ご飯'];
 
@@ -424,14 +440,12 @@ function renderMeal() {
     <button class="primary" id="add-meal-btn">記録を追加</button>
     <button class="secondary" id="save-favorite-btn" style="margin-bottom:12px;">☆ 今の内容を「よく食べるもの」に登録</button>
 
-    <!-- 1. 格納式 よく食べるものリスト -->
     <button type="button" class="accordion-toggle" id="fav-toggle-btn">
       <span><i class="ti ti-star"></i> よく食べるものリスト (${state.favoriteMeals.length})</span>
       <i class="ti ${favListOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
     </button>
     ${favListOpen ? `<div class="chip-row" style="margin-bottom:16px;">${favoriteChips || '<span class="sub" style="padding:6px;">登録がありません</span>'}</div>` : ''}
 
-    <!-- 2. 写真から自動入力（よく食べるものリストの下へ移動） -->
     <div class="field" style="margin-top:8px;">
       <label>写真から自動入力 (任意・Gemini APIキーが必要)</label>
       <input type="file" accept="image/*" id="meal-photo-input">
@@ -502,9 +516,11 @@ function renderHistory() {
   `;
 }
 
-/* ===== 描画: 設定 (配色設定を追加) ===== */
+/* ===== 描画: 設定 (ご指定順に再構成) ===== */
 function renderSettings() {
   const activeSet = getActiveSet();
+  const bmiData = calculateBMI(state.settings.bodyHeightCm, state.settings.bodyWeightKg);
+
   const exerciseRows = state.exercises.map(e => `
     <div class="list-row">
       <span class="val">${escapeHtml(e.name)}</span>
@@ -512,53 +528,37 @@ function renderSettings() {
     </div>`).join('');
 
   return `
-    <!-- アプリの配色設定 -->
-    <p class="section-title">アプリの配色設定</p>
-    <div class="field">
-      <label>メイン・アクセントカラー (ボタン・文字)</label>
-      <div class="color-palette-grid">
-        ${PRESET_ACCENTS.map(c => `
-          <button type="button" class="color-swatch-btn ${state.settings.themeAccent === c ? 'active' : ''}" style="background:${c};" data-set-accent="${c}"></button>
-        `).join('')}
-      </div>
-      <div class="row-2" style="align-items:center;">
-        <span class="sub">微調整ピッカー:</span>
-        <input type="color" id="accent-color-picker" value="${state.settings.themeAccent}">
-      </div>
-    </div>
-
-    <div class="field" style="margin-top:16px;">
-      <label>背景カラー</label>
-      <div class="color-palette-grid">
-        ${PRESET_BACKGROUNDS.map(c => `
-          <button type="button" class="color-swatch-btn ${state.settings.themeBg === c ? 'active' : ''}" style="background:${c};" data-set-bg="${c}"></button>
-        `).join('')}
-      </div>
-      <div class="row-2" style="align-items:center;">
-        <span class="sub">微調整ピッカー:</span>
-        <input type="color" id="bg-color-picker" value="${state.settings.themeBg}">
-      </div>
-    </div>
-
+    <!-- 1. 基本情報 -->
     <p class="section-title">基本情報</p>
     <div class="field"><label>名前</label><input type="text" id="user-name" value="${escapeHtml(state.settings.userName || '')}" placeholder="たろう"></div>
-    <div class="field">
-      <label>敬称</label>
-      <div class="row-3">
-        <button type="button" class="secondary honorific-btn" data-honorific="さん" style="${state.settings.honorific === 'さん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">さん</button>
-        <button type="button" class="secondary honorific-btn" data-honorific="くん" style="${state.settings.honorific === 'くん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">くん</button>
-        <button type="button" class="secondary honorific-btn" data-honorific="none" style="${state.settings.honorific === 'none' ? 'border-color:var(--gold); color:var(--gold);' : ''}">呼び捨て</button>
-      </div>
+    <div class="field"><label>身長 (cm)</label><input type="number" id="body-height" inputmode="decimal" value="${state.settings.bodyHeightCm ?? ''}" placeholder="170"></div>
+    <div class="field"><label>体重 (kg)</label><input type="number" id="body-weight" inputmode="decimal" value="${state.settings.bodyWeightKg ?? ''}" placeholder="65"></div>
+    
+    <div class="bmi-card">
+      <span class="label" style="margin:0;"><i class="ti ti-calculator"></i> 現在のBMI</span>
+      <span class="value gold">${bmiData ? `${bmiData.val} <span class="unit">(${bmiData.category})</span>` : '<span class="sub">身長・体重を入力で計算</span>'}</span>
     </div>
-    <div class="field"><label>体重 (kg)</label><input type="number" id="body-weight" value="${state.settings.bodyWeightKg ?? ''}" placeholder="60"></div>
-    <button class="primary" id="save-profile-btn">基本情報を保存</button>
+    <button class="primary" id="save-profile-btn" style="margin-bottom:20px;">基本情報を保存</button>
 
-    <p class="section-title">種目登録</p>
-    <div class="field"><label>種目名</label><input type="text" id="new-exercise-name" placeholder="プランク"></div>
-    <button class="primary" id="save-exercise-btn">種目を追加</button>
-    <div class="list-card" style="margin:16px 0 20px;">${exerciseRows || `<div class="empty-hint">まだ種目がありません</div>`}</div>
+    <!-- 2. 目標設定 -->
+    <p class="section-title">目標設定</p>
+    <div class="field"><label>1日の目標セット数</label><input type="number" id="goal-sets" value="${state.goals.dailySetTarget}"></div>
+    <div class="field"><label>1日のカロリー上限 (kcal)</label><input type="number" id="goal-calories" value="${state.goals.dailyCalorieTarget}"></div>
+    <button class="primary" id="save-goals-btn" style="margin-bottom:20px;">目標を保存</button>
 
-    <p class="section-title">キャラクター表示設定</p>
+    <!-- 3. 種目設定 (格納式) -->
+    <p class="section-title">種目設定</p>
+    <div class="field"><label>新しい種目を追加</label><input type="text" id="new-exercise-name" placeholder="プランク"></div>
+    <button class="primary" id="save-exercise-btn" style="margin-bottom:12px;">種目を追加</button>
+
+    <button type="button" class="accordion-toggle" id="exercise-toggle-btn">
+      <span><i class="ti ti-list"></i> 登録済み種目リスト (${state.exercises.length})</span>
+      <i class="ti ${exerciseListOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
+    </button>
+    ${exerciseListOpen ? `<div class="list-card" style="margin-bottom:20px;">${exerciseRows || `<div class="empty-hint">まだ種目がありません</div>`}</div>` : ''}
+
+    <!-- 4. キャラクター設定 (敬称はこちらへお引越し) -->
+    <p class="section-title">キャラクター設定</p>
     <div class="list-card" style="padding:4px 16px; margin-bottom:16px;">
       <div class="toggle-row">
         <span>キャラを表示する</span>
@@ -566,7 +566,15 @@ function renderSettings() {
       </div>
     </div>
 
-    <p class="section-title">キャラセット管理</p>
+    <div class="field">
+      <label>キャラクターからの呼ばれ方 (敬称)</label>
+      <div class="row-3">
+        <button type="button" class="secondary honorific-btn" data-honorific="さん" style="${state.settings.honorific === 'さん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">さん</button>
+        <button type="button" class="secondary honorific-btn" data-honorific="くん" style="${state.settings.honorific === 'くん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">くん</button>
+        <button type="button" class="secondary honorific-btn" data-honorific="none" style="${state.settings.honorific === 'none' ? 'border-color:var(--gold); color:var(--gold);' : ''}">呼び捨て</button>
+      </div>
+    </div>
+
     <div class="field">
       <label>使用セット</label>
       <select id="mascot-set-select">${state.settings.mascotSets.map(s => `<option value="${s.id}" ${s.id === state.settings.activeMascotSetId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select>
@@ -588,12 +596,43 @@ function renderSettings() {
         </div>`).join('')}
     </div>
 
-    <p class="section-title">目標設定</p>
-    <div class="field"><label>目標セット数</label><input type="number" id="goal-sets" value="${state.goals.dailySetTarget}"></div>
-    <div class="field"><label>カロリー上限 (kcal)</label><input type="number" id="goal-calories" value="${state.goals.dailyCalorieTarget}"></div>
-    <button class="primary" id="save-goals-btn">目標を保存</button>
+    <!-- 5. アプリの配色設定 (格納式・確実に見える微調整ボタン) -->
+    <p class="section-title">アプリの配色設定</p>
+    
+    <button type="button" class="accordion-toggle" id="accent-toggle-btn">
+      <span><i class="ti ti-palette"></i> アクセント色設定 (ボタン・数値)</span>
+      <i class="ti ${themeAccentOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
+    </button>
+    ${themeAccentOpen ? `
+      <div style="margin-bottom:16px; padding:0 4px;">
+        <div class="color-palette-grid">
+          ${PRESET_ACCENTS.map(c => `<button type="button" class="color-swatch-btn ${state.settings.themeAccent === c ? 'active' : ''}" style="background:${c};" data-set-accent="${c}"></button>`).join('')}
+        </div>
+        <div class="color-picker-trigger">
+          <i class="ti ti-color-picker"></i> 🎨 微調整パレットを開く
+          <input type="color" id="accent-color-picker" class="color-picker-hidden" value="${state.settings.themeAccent}">
+        </div>
+      </div>
+    ` : ''}
 
-    <p class="section-title">バックアップ</p>
+    <button type="button" class="accordion-toggle" id="bg-toggle-btn">
+      <span><i class="ti ti-brush"></i> 背景色設定</span>
+      <i class="ti ${themeBgOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
+    </button>
+    ${themeBgOpen ? `
+      <div style="margin-bottom:20px; padding:0 4px;">
+        <div class="color-palette-grid">
+          ${PRESET_BACKGROUNDS.map(c => `<button type="button" class="color-swatch-btn ${state.settings.themeBg === c ? 'active' : ''}" style="background:${c};" data-set-bg="${c}"></button>`).join('')}
+        </div>
+        <div class="color-picker-trigger">
+          <i class="ti ti-color-picker"></i> 🎨 微調整パレットを開く
+          <input type="color" id="bg-color-picker" class="color-picker-hidden" value="${state.settings.themeBg}">
+        </div>
+      </div>
+    ` : ''}
+
+    <!-- 6. バックアップ -->
+    <p class="section-title">バックアップ・データ管理</p>
     <button class="secondary" id="export-backup-btn" style="margin-bottom:10px;">JSONバックアップ保存</button>
     <input type="file" accept="application/json" id="import-backup-input">
   `;
@@ -727,7 +766,6 @@ function attachEvents() {
     chip.addEventListener('click', (e) => {
       if (e.target.closest('[data-favorite-remove]')) return;
       const fav = state.favoriteMeals.find(f => f.id === chip.dataset.favoriteTap);
-      // 現在選択中の区分を適用
       if (fav) addMealRecord(fav.name, fav.calories, selectedMealCategory);
     });
   });
@@ -747,7 +785,7 @@ function attachEvents() {
       if (!name || cal === '') { alert('食べたものとカロリーを入力してください'); return; }
       state.favoriteMeals.push({ id: uid(), name, calories: Number(cal) });
       saveState();
-      favListOpen = true; // 登録したら自動で開く
+      favListOpen = true;
       render();
     });
   }
@@ -808,59 +846,27 @@ function attachEvents() {
     });
   });
 
-  // ---- 設定: 配色変更 ----
-  document.querySelectorAll('[data-set-accent]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.settings.themeAccent = btn.dataset.setAccent;
-      saveState();
-      render();
-    });
-  });
-  const accentPicker = document.getElementById('accent-color-picker');
-  if (accentPicker) {
-    accentPicker.addEventListener('change', () => {
-      state.settings.themeAccent = accentPicker.value;
-      saveState();
-      render();
-    });
-  }
-  document.querySelectorAll('[data-set-bg]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.settings.themeBg = btn.dataset.setBg;
-      saveState();
-      render();
-    });
-  });
-  const bgPicker = document.getElementById('bg-color-picker');
-  if (bgPicker) {
-    bgPicker.addEventListener('change', () => {
-      state.settings.themeBg = bgPicker.value;
-      saveState();
-      render();
-    });
-  }
-
-  // ---- 設定: 基本情報・その他 ----
-  let pendingHonorific = state.settings.honorific;
-  document.querySelectorAll('.honorific-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      pendingHonorific = btn.dataset.honorific;
-      document.querySelectorAll('.honorific-btn').forEach((b) => {
-        b.style.borderColor = '';
-        b.style.color = '';
-      });
-      btn.style.borderColor = 'var(--gold)';
-      btn.style.color = 'var(--gold)';
-    });
-  });
+  // ---- 設定: 基本情報 (BMI即時反映) ----
   const saveProfileBtn = document.getElementById('save-profile-btn');
   if (saveProfileBtn) {
     saveProfileBtn.addEventListener('click', () => {
       state.settings.userName = document.getElementById('user-name').value.trim();
-      state.settings.honorific = pendingHonorific;
-      state.settings.bodyWeightKg = Number(document.getElementById('body-weight').value) || null;
+      const hVal = document.getElementById('body-height').value;
+      state.settings.bodyHeightCm = hVal === '' ? null : Number(hVal);
+      const wVal = document.getElementById('body-weight').value;
+      state.settings.bodyWeightKg = wVal === '' ? null : Number(wVal);
       saveState();
-      alert('保存しました');
+      render();
+      alert('基本情報を保存しました');
+    });
+  }
+
+  // ---- 設定: 種目アコーディオン & 追加 ----
+  const exerciseToggleBtn = document.getElementById('exercise-toggle-btn');
+  if (exerciseToggleBtn) {
+    exerciseToggleBtn.addEventListener('click', () => {
+      exerciseListOpen = !exerciseListOpen;
+      render();
     });
   }
   const saveExerciseBtn = document.getElementById('save-exercise-btn');
@@ -870,6 +876,7 @@ function attachEvents() {
       if (!name) return;
       state.exercises.push({ id: uid(), name, trackWeight: true, trackReps: true, trackTime: false, met: 5.0 });
       saveState();
+      exerciseListOpen = true;
       render();
     });
   }
@@ -877,6 +884,15 @@ function attachEvents() {
     btn.addEventListener('click', () => {
       if (!confirm('削除しますか?')) return;
       state.exercises = state.exercises.filter(e => e.id !== btn.dataset.deleteExercise);
+      saveState();
+      render();
+    });
+  });
+
+  // ---- 設定: キャラクター & 敬称 ----
+  document.querySelectorAll('.honorific-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.settings.honorific = btn.dataset.honorific;
       saveState();
       render();
     });
@@ -925,15 +941,74 @@ function attachEvents() {
       }
     });
   });
+
+  // ---- 設定: 目標 ----
   const saveGoalsBtn = document.getElementById('save-goals-btn');
   if (saveGoalsBtn) {
     saveGoalsBtn.addEventListener('click', () => {
       state.goals.dailySetTarget = Number(document.getElementById('goal-sets').value) || 0;
       state.goals.dailyCalorieTarget = Number(document.getElementById('goal-calories').value) || 0;
       saveState();
-      alert('保存しました');
+      alert('目標を保存しました');
     });
   }
+
+  // ---- 設定: 色彩アコーディオン & 微調整ピッカー ----
+  const accentToggleBtn = document.getElementById('accent-toggle-btn');
+  if (accentToggleBtn) {
+    accentToggleBtn.addEventListener('click', () => {
+      themeAccentOpen = !themeAccentOpen;
+      render();
+    });
+  }
+  document.querySelectorAll('[data-set-accent]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.settings.themeAccent = btn.dataset.setAccent;
+      saveState();
+      render();
+    });
+  });
+  const accentPicker = document.getElementById('accent-color-picker');
+  if (accentPicker) {
+    accentPicker.addEventListener('input', (e) => {
+      state.settings.themeAccent = e.target.value;
+      applyThemeColors();
+    });
+    accentPicker.addEventListener('change', (e) => {
+      state.settings.themeAccent = e.target.value;
+      saveState();
+      render();
+    });
+  }
+
+  const bgToggleBtn = document.getElementById('bg-toggle-btn');
+  if (bgToggleBtn) {
+    bgToggleBtn.addEventListener('click', () => {
+      themeBgOpen = !themeBgOpen;
+      render();
+    });
+  }
+  document.querySelectorAll('[data-set-bg]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.settings.themeBg = btn.dataset.setBg;
+      saveState();
+      render();
+    });
+  });
+  const bgPicker = document.getElementById('bg-color-picker');
+  if (bgPicker) {
+    bgPicker.addEventListener('input', (e) => {
+      state.settings.themeBg = e.target.value;
+      applyThemeColors();
+    });
+    bgPicker.addEventListener('change', (e) => {
+      state.settings.themeBg = e.target.value;
+      saveState();
+      render();
+    });
+  }
+
+  // ---- 設定: バックアップ ----
   const exportBackupBtn = document.getElementById('export-backup-btn');
   if (exportBackupBtn) {
     exportBackupBtn.addEventListener('click', () => {
