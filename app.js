@@ -655,9 +655,17 @@ function renderSettings() {
     <div class="field"><label>1日のカロリー上限 (kcal)</label><input type="number" id="goal-calories" value="${state.goals.dailyCalorieTarget}"></div>
     <button class="primary" id="save-goals-btn" style="margin-bottom:20px;">目標を保存</button>
 
-    <!-- 3. 種目設定 -->
+   <!-- 3. 種目設定 -->
     <p class="section-title">種目設定</p>
-    <div class="field"><label>新しい種目を追加</label><input type="text" id="new-exercise-name" placeholder="プランク"></div>
+    <div class="field"><label>新しい種目を追加</label><input type="text" id="new-exercise-name" placeholder="例: ベンチプレス、プランク"></div>
+    <div class="field">
+      <label>記録項目 (複数選択可)</label>
+      <div style="display:flex; gap:16px; align-items:center; padding:6px 0;">
+        <label style="display:flex; align-items:center; gap:6px; font-size:14px; cursor:pointer;"><input type="checkbox" id="track-weight-chk" checked> 重量</label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:14px; cursor:pointer;"><input type="checkbox" id="track-reps-chk" checked> 回数</label>
+        <label style="display:flex; align-items:center; gap:6px; font-size:14px; cursor:pointer;"><input type="checkbox" id="track-time-chk"> 時間</label>
+      </div>
+    </div>
     <button class="primary" id="save-exercise-btn" style="margin-bottom:12px;">種目を追加</button>
 
     <button type="button" class="accordion-toggle" id="exercise-toggle-btn">
@@ -1017,12 +1025,30 @@ function attachEvents() {
       render();
     });
   }
-  const saveExerciseBtn = document.getElementById('save-exercise-btn');
+ const saveExerciseBtn = document.getElementById('save-exercise-btn');
   if (saveExerciseBtn) {
     saveExerciseBtn.addEventListener('click', () => {
-      const name = document.getElementById('new-exercise-name').value.trim();
+      const nameInput = document.getElementById('new-exercise-name');
+      const name = nameInput.value.trim();
       if (!name) return;
-      state.exercises.push({ id: uid(), name, trackWeight: true, trackReps: true, trackTime: false, met: 5.0 });
+
+      const trackWeight = document.getElementById('track-weight-chk').checked;
+      const trackReps = document.getElementById('track-reps-chk').checked;
+      const trackTime = document.getElementById('track-time-chk').checked;
+
+      if (!trackWeight && !trackReps && !trackTime) {
+        alert('重量・回数・時間から1つ以上選択してください');
+        return;
+      }
+
+      state.exercises.push({
+        id: uid(),
+        name,
+        trackWeight,
+        trackReps,
+        trackTime,
+        met: 5.0
+      });
       saveState();
       exerciseListOpen = true;
       render();
