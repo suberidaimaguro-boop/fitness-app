@@ -163,7 +163,7 @@ function calculateBMI(heightCm, weightKg) {
   if (!heightCm || !weightKg || heightCm <= 0 || weightKg <= 0) return null;
   const hM = heightCm / 100;
   const bmi = weightKg / (hM * hM);
-  const standardWeight = (22 * hM * hM).toFixed(1); // 適正体重(BMI 22)
+  const standardWeight = (22 * hM * hM).toFixed(1);
   const diffStandard = (weightKg - standardWeight).toFixed(1);
 
   let category = '';
@@ -452,6 +452,43 @@ function renderWorkout() {
 let selectedMealCategory = '朝食';
 const MEAL_CATEGORIES = ['朝食', '昼食', '間食', '夜ご飯'];
 
+function fileToBase64Raw(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const result = reader.result;
+      resolve(result.slice(result.indexOf(',') + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fetchGeminiFoodRecognition(file) {
+  const apiKey = state.settings.geminiApiKey;
+  if (!apiKey) return { error: 'no_key' };
+  try {
+    const base64Data = await fileToBase64Raw(file);
+    const prompt = '料理の名前と推定カロリー(kcal、整数)を判定し、{"name": "料理名", "calories": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ inline_data: { mime_type: file.type || 'image/jpeg', data: base64Data } }, { text: prompt }] }]
+      })
+    });
+    if (!res.ok) return { error: 'failed' };
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return { error: 'no_text' };
+    const cleaned = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    return { name: parsed.name, calories: Math.round(parsed.calories) };
+  } catch (e) {
+    return { error: 'exception' };
+  }
+}
+
 async function addMealRecord(name, calNum, category) {
   const target = state.goals.dailyCalorieTarget;
   const beforeTotal = currentCalorieTotal();
@@ -586,7 +623,7 @@ function renderHistory() {
   `;
 }
 
-/* ===== 描画: 設定 (BMI詳細アドバイス追加) ===== */
+/* ===== 描画: 設定 (キャラOFF時隠蔽 ＆ AIキー独立) ===== */
 function renderSettings() {
   const activeSet = getActiveSet();
   const bmiData = calculateBMI(state.settings.bodyHeightCm, state.settings.bodyWeightKg);
@@ -629,7 +666,7 @@ function renderSettings() {
     </button>
     ${exerciseListOpen ? `<div class="list-card" style="margin-bottom:20px;">${exerciseRows || `<div class="empty-hint">まだ種目がありません</div>`}</div>` : ''}
 
-    <!-- 4. キャラクター設定 -->
+    <!-- 4. キャラクター設定 (OFFの時は詳細を隠す) -->
     <p class="section-title">キャラクター設定</p>
     <div class="list-card" style="padding:4px 16px; margin-bottom:16px;">
       <div class="toggle-row">
@@ -638,41 +675,47 @@ function renderSettings() {
       </div>
     </div>
 
-    <div class="field">
-      <label>キャラクターからの呼ばれ方 (敬称)</label>
-      <div class="row-3">
-        <button type="button" class="secondary honorific-btn" data-honorific="さん" style="${state.settings.honorific === 'さん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">さん</button>
-        <button type="button" class="secondary honorific-btn" data-honorific="くん" style="${state.settings.honorific === 'くん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">くん</button>
-        <button type="button" class="secondary honorific-btn" data-honorific="none" style="${state.settings.honorific === 'none' ? 'border-color:var(--gold); color:var(--gold);' : ''}">呼び捨て</button>
+    ${state.settings.mascotEnabled ? `
+      <div class="field">
+        <label>キャラクターからの呼ばれ方 (敬称)</label>
+        <div class="row-3">
+          <button type="button" class="secondary honorific-btn" data-honorific="さん" style="${state.settings.honorific === 'さん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">さん</button>
+          <button type="button" class="secondary honorific-btn" data-honorific="くん" style="${state.settings.honorific === 'くん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">くん</button>
+          <button type="button" class="secondary honorific-btn" data-honorific="none" style="${state.settings.honorific === 'none' ? 'border-color:var(--gold); color:var(--gold);' : ''}">呼び捨て</button>
+        </div>
       </div>
-    </div>
 
+      <div class="field">
+        <label>使用セット</label>
+        <select id="mascot-set-select">${state.settings.mascotSets.map(s => `<option value="${s.id}" ${s.id === state.settings.activeMascotSetId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+      </div>
+      <div class="field">
+        <label>セット追加</label>
+        <div class="row-2"><input type="text" id="new-set-name" placeholder="セット名(例: セットA)"><button type="button" class="secondary" id="add-mascot-set-btn">追加</button></div>
+      </div>
+
+      <p class="section-title">画像登録 (端末内保存)</p>
+      <div class="list-card" style="padding:12px 16px; margin-bottom:16px;">
+        ${MASCOT_EXPRESSIONS.map(exp => `
+          <div class="toggle-row" style="align-items:center;">
+            <span style="display:flex; align-items:center; gap:8px;">
+              <img src="${getMascotImage(exp)}" style="width:36px; height:36px; border-radius:50%; object-fit:cover;">
+              ${MASCOT_EXPRESSION_LABELS[exp]}
+            </span>
+            <input type="file" accept="image/*" class="mascot-image-input" data-expression="${exp}">
+          </div>`).join('')}
+      </div>
+    ` : ''}
+
+    <!-- 5. AI機能設定 (常時表示・画像判定とキャラ会話両方に対応) -->
+    <p class="section-title">AI機能設定 (任意)</p>
     <div class="field">
-      <label>使用セット</label>
-      <select id="mascot-set-select">${state.settings.mascotSets.map(s => `<option value="${s.id}" ${s.id === state.settings.activeMascotSetId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select>
+      <label>Gemini APIキー (画像解析・応援コメントに使用)</label>
+      <input type="text" id="gemini-api-key" value="${escapeHtml(state.settings.geminiApiKey || '')}" placeholder="AIキーを入力">
     </div>
-    <div class="field">
-      <label>セット追加</label>
-      <div class="row-2"><input type="text" id="new-set-name" placeholder="セット名(例: セットA)"><button type="button" class="secondary" id="add-mascot-set-btn">追加</button></div>
-    </div>
-
-    <p class="section-title">画像登録 (端末内保存)</p>
-    <div class="list-card" style="padding:12px 16px; margin-bottom:16px;">
-      ${MASCOT_EXPRESSIONS.map(exp => `
-        <div class="toggle-row" style="align-items:center;">
-          <span style="display:flex; align-items:center; gap:8px;">
-            <img src="${getMascotImage(exp)}" style="width:36px; height:36px; border-radius:50%; object-fit:cover;">
-            ${MASCOT_EXPRESSION_LABELS[exp]}
-          </span>
-          <input type="file" accept="image/*" class="mascot-image-input" data-expression="${exp}">
-        </div>`).join('')}
-    </div>
-
-    <p class="section-title">AI設定 (任意)</p>
-    <div class="field"><label>Gemini APIキー</label><input type="text" id="gemini-api-key" value="${escapeHtml(state.settings.geminiApiKey || '')}" placeholder="AIキーを入力"></div>
     <button class="primary" id="save-api-key-btn" style="margin-bottom:20px;">APIキーを保存</button>
 
-    <!-- 5. 配色設定 -->
+    <!-- 6. 配色設定 -->
     <p class="section-title">アプリの配色設定</p>
     <button type="button" class="accordion-toggle" id="accent-toggle-btn">
       <span><i class="ti ti-palette"></i> アクセント色設定 (ボタン・数値)</span>
@@ -706,7 +749,7 @@ function renderSettings() {
       </div>
     ` : ''}
 
-    <!-- 6. バックアップ -->
+    <!-- 7. バックアップ -->
     <p class="section-title">バックアップ・データ管理</p>
     <button class="secondary" id="export-backup-btn" style="margin-bottom:10px;">JSONバックアップ保存</button>
     <input type="file" accept="application/json" id="import-backup-input">
@@ -872,6 +915,29 @@ function attachEvents() {
     });
   }
 
+  // ---- 食事: 写真からAI判定 ----
+  const mealPhotoInput = document.getElementById('meal-photo-input');
+  if (mealPhotoInput) {
+    mealPhotoInput.addEventListener('change', async () => {
+      const file = mealPhotoInput.files && mealPhotoInput.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById('meal-photo-status');
+      if (!state.settings.geminiApiKey) {
+        if (statusEl) statusEl.textContent = '設定画面でGemini APIキーを登録してください';
+        return;
+      }
+      if (statusEl) statusEl.textContent = 'AIが写真から料理とカロリーを解析中…';
+      const result = await fetchGeminiFoodRecognition(file);
+      if (result.error) {
+        if (statusEl) statusEl.textContent = '判定に失敗しました。手動で入力してください。';
+        return;
+      }
+      document.getElementById('meal-name').value = result.name;
+      document.getElementById('meal-calories').value = result.calories;
+      if (statusEl) statusEl.textContent = `判定結果を入力しました: ${result.name} (約${result.calories}kcal)`;
+    });
+  }
+
   // ---- 食事追加・日付 ----
   const dateMealInput = document.getElementById('active-log-date-meal');
   if (dateMealInput) {
@@ -928,7 +994,7 @@ function attachEvents() {
     });
   });
 
-  // ---- 設定: 基本情報 (BMI即時反映) ----
+  // ---- 設定: 基本情報 ----
   const saveProfileBtn = document.getElementById('save-profile-btn');
   if (saveProfileBtn) {
     saveProfileBtn.addEventListener('click', () => {
@@ -1035,13 +1101,13 @@ function attachEvents() {
     });
   }
 
-  // ---- 設定: APIキー ----
+  // ---- 設定: APIキー保存 ----
   const saveApiKeyBtn = document.getElementById('save-api-key-btn');
   if (saveApiKeyBtn) {
     saveApiKeyBtn.addEventListener('click', () => {
       state.settings.geminiApiKey = document.getElementById('gemini-api-key').value.trim();
       saveState();
-      alert('APIキーを保存しました');
+      alert('Gemini APIキーを保存しました');
     });
   }
 
