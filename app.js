@@ -908,7 +908,7 @@ function renderSettings() {
     <div class="field">
       <label>新しいセットを追加</label>
       <div class="row-2">
-        <input type="text" id="new-set-name" placeholder="セット名(例: 彼女)">
+        <input type="text" id="new-set-name" placeholder="セット名（セットA)">
         <button type="button" class="secondary" id="add-mascot-set-btn">追加</button>
       </div>
     </div>
