@@ -841,11 +841,15 @@ async function addMealRecord(name, calNum, category) {
     showMascot('angry', 'カロリーオーバー確認中…', false);
     const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。ちょっと怒りながらも愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
     showMascot('angry', aiText || pickLine('mealOverAngry'), true, true);
-  } else if (apiKey) {
+ } else if (apiKey) {
     // APIキーがあれば栄養バランスの観点でコメント
     showMascot(category === '間食' ? 'angry' : 'smile', '栄養バランス確認中…', false);
     const expr = category === '間食' ? 'angry' : 'smile';
-    const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、次の食事へのアドバイスを含めて1〜2文で話しかけてください。間食であれば少したしなめる調子で、それ以外は褒めつつ助言してください。前置きは不要です。`);
+    const prompt = `ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
+    let aiText = await fetchGeminiComment(prompt);
+    if (aiText) {
+      aiText = `【${category}：${name} に対して】\n` + aiText;
+    }
     showMascot(expr, aiText || pickLine(category === '間食' ? 'mealSnackAdd' : 'mealNormalAdd'), true, true);
   } else if (category === '間食') {
     showMascot('angry', pickLine('mealSnackAdd'), true, true);
@@ -884,9 +888,22 @@ function renderMeal() {
       <label>記録する日付</label>
       <input type="date" id="active-log-date-meal" value="${activeLogDate}">
     </div>
-    <div class="field"><label>区分</label><select id="meal-category-select">${MEAL_CATEGORIES.map(c => `<option value="${c}" ${c === selectedMealCategory ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-    <div class="field"><label>食べたもの</label><input type="text" id="meal-name" placeholder="鶏むね肉のサラダ"></div>
-    <div class="field"><label>カロリー (kcal)</label><input type="number" id="meal-calories" inputmode="numeric" placeholder="350"></div>
+  <div class="field"><label>区分</label><select id="meal-category-select">${MEAL_CATEGORIES.map(c => `<option value="${c}" ${c === selectedMealCategory ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+    
+    <div class="field">
+      <label>食べたもの</label>
+      <input type="text" id="meal-name" list="meal-history-list" placeholder="鶏むね肉のサラダ">
+      <datalist id="meal-history-list">
+        ${[...new Set(state.meals.map(m => m.name))].map(n => `<option value="${escapeHtml(n)}">`).join('')}
+      </datalist>
+    </div>
+    
+    <div class="field">
+      <label>カロリー (kcal)</label>
+      <input type="number" id="meal-calories" inputmode="numeric" placeholder="350">
+    </div>
+    
+    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー推測</button>
     <button class="primary" id="add-meal-btn">記録を追加</button>
     <button class="secondary" id="save-favorite-btn" style="margin-bottom:12px;">☆ 今の内容を「よく食べるもの」に登録</button>
 
@@ -1160,12 +1177,29 @@ function render() {
   else if (currentTab === 'settings') content = renderSettings();
 
   app.innerHTML = `
-    <div class="topbar"><p class="date">${dateStr}</p><h1>${TITLES[currentTab]}</h1></div>
+    <div class="topbar" style="display:flex; justify-content:space-between; align-items:center;">
+      <div><p class="date">${dateStr}</p><h1>${TITLES[currentTab]}</h1></div>
+      <button id="help-btn" style="background:none; border:none; color:var(--text-secondary); font-size:24px; cursor:pointer; padding:4px;"><i class="ti ti-help-circle"></i></button>
+    </div>
     <div class="screen">${content}</div>
     <div class="tabbar">
       ${TABS.map(t => `<button class="tab-btn ${t.id === currentTab ? 'active' : ''}" data-tab="${t.id}"><i class="ti ${t.icon}"></i><span>${t.label}</span></button>`).join('')}
     </div>
     <div class="mascot-wrap" id="mascot-wrap"></div>
+    
+    <div id="help-modal" class="modal-overlay" style="display:none;">
+      <div class="modal-content">
+        <h3 style="margin-top:0;">📖 アプリの使い方</h3>
+        <ul style="text-align:left; font-size:13px; color:var(--text-primary); padding-left:20px; line-height:1.6;">
+          <li><strong>ホーム:</strong> 日々の達成率や連続記録を確認できます。</li>
+          <li><strong>筋トレ:</strong> 種目を選んで記録します。タイマー計測も可能です。</li>
+          <li><strong>食事:</strong> 文字や写真からAIがカロリーを推測してくれます。</li>
+          <li><strong>履歴:</strong> 過去の記録や、日々の「総合カロリー」を確認できます。</li>
+          <li><strong>設定:</strong> 目標、AIキー、キャラ、配色などを変更できます。</li>
+        </ul>
+        <button class="primary" id="close-help-btn" style="margin-top:16px;">閉じる</button>
+      </div>
+    </div>
   `;
 
   attachEvents();
@@ -1267,14 +1301,19 @@ function attachEvents() {
         showMascot('smile', '自己ベスト更新中…!', false);
         const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`);
         showMascot('smile', aiText || pickLine('workoutPR'), true, true);
-      } else if (apiKey) {
+     } else if (apiKey) {
         showMascot('smile', '筋肉バランス確認中…', false);
         const exNamesToday = [...new Set(currentLogWorkouts().map(l => {
           const e2 = state.exercises.find(e => e.id === l.exerciseId);
           return e2 ? e2.name : null;
         }).filter(Boolean))].join('、');
-        const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${ex.name}」を記録しました。本日ここまでの筋トレ種目: ${exNamesToday}。使った筋肉のケア(ストレッチ・マッサージ)や、部位バランスの観点から次に取り組むと良いトレーニングを、褒めつつ1〜2文でアドバイスしてください。前置きは不要です。`);
+        const prompt = `ユーザーが「${ex.name}」を記録しました。本日ここまでの筋トレ種目: ${exNamesToday}。部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
+        let aiText = await fetchGeminiComment(prompt);
+        if (aiText) {
+          aiText = `【筋トレ：${ex.name} に対して】\n` + aiText;
+        }
         showMascot('smile', aiText || pickLine('workoutAdd'), true, true);
+      } else {
       } else {
         showMascot('smile', pickLine('workoutAdd'), true, true);
       }
@@ -1646,3 +1685,54 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   });
 }
+// ---- ヘルプモーダル ----
+  const helpBtn = document.getElementById('help-btn');
+  const closeHelpBtn = document.getElementById('close-help-btn');
+  const helpModal = document.getElementById('help-modal');
+  if (helpBtn && helpModal) {
+    helpBtn.addEventListener('click', () => helpModal.style.display = 'flex');
+  }
+  if (closeHelpBtn && helpModal) {
+    closeHelpBtn.addEventListener('click', () => helpModal.style.display = 'none');
+  }
+
+  // ---- 食事: AIカロリー推測とオートコンプリート ----
+  const aiGuessBtn = document.getElementById('ai-guess-meal-btn');
+  if (aiGuessBtn) {
+    aiGuessBtn.addEventListener('click', async () => {
+      const nameInput = document.getElementById('meal-name');
+      const name = nameInput.value.trim();
+      if (!name) { alert('先に食べたものを入力してください'); return; }
+      if (!state.settings.geminiApiKey) { alert('設定からAPIキーを登録してください'); return; }
+      
+      const prevText = aiGuessBtn.textContent;
+      aiGuessBtn.textContent = '推測中...';
+      aiGuessBtn.disabled = true;
+      
+      const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)を推測し、{"calories": 数値} のJSON形式のみ返してください。前置きや解説は不要です。`;
+      const resText = await fetchGeminiComment(prompt);
+      
+      aiGuessBtn.textContent = prevText;
+      aiGuessBtn.disabled = false;
+      
+      try {
+        const cleaned = resText.replace(/```json|```/g, '').trim();
+        const parsed = JSON.parse(cleaned);
+        document.getElementById('meal-calories').value = parsed.calories;
+      } catch (e) {
+        alert('推測に失敗しました。手動で入力してください。');
+      }
+    });
+  }
+
+  const mealNameInput = document.getElementById('meal-name');
+  if (mealNameInput) {
+    mealNameInput.addEventListener('change', () => {
+      const name = mealNameInput.value.trim();
+      const pastMeal = state.meals.find(m => m.name === name);
+      const calInput = document.getElementById('meal-calories');
+      if (pastMeal && !calInput.value) {
+        calInput.value = pastMeal.calories; // 過去の履歴からカロリーを自動補完
+      }
+    });
+  }
