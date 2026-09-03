@@ -1268,7 +1268,7 @@ function attachEvents() {
       selectedMetValue = Number(metSelect.value);
     });
   }
-    const timerToggleBtn = document.getElementById('timer-toggle-btn');
+  const timerToggleBtn = document.getElementById('timer-toggle-btn');
   if (timerToggleBtn) {
     timerToggleBtn.addEventListener('click', () => {
       if (activeTimer && activeTimer.exerciseId === timerToggleBtn.dataset.exerciseId) {
@@ -1279,7 +1279,8 @@ function attachEvents() {
     });
   }
   if (activeTimer) startTimerTickDisplay();
-const addSetBtn = document.getElementById('add-set-btn');
+
+  const addSetBtn = document.getElementById('add-set-btn');
   if (addSetBtn) {
     addSetBtn.addEventListener('click', async () => {
       const ex = state.exercises.find(e => e.id === selectedExerciseId);
@@ -1465,7 +1466,7 @@ const addSetBtn = document.getElementById('add-set-btn');
       render();
     });
   }
- const saveExerciseBtn = document.getElementById('save-exercise-btn');
+  const saveExerciseBtn = document.getElementById('save-exercise-btn');
   if (saveExerciseBtn) {
     saveExerciseBtn.addEventListener('click', () => {
       const nameInput = document.getElementById('new-exercise-name');
@@ -1555,8 +1556,6 @@ const addSetBtn = document.getElementById('add-set-btn');
         const dataUrl = await resizeImageFile(file);
         const active = getActiveSet();
         const key = mascotImageKey(active.id, input.dataset.expression);
-        // 画像本体はIndexedDBに保存(localStorage/stateには入れない)。
-        // メモリキャッシュにも反映して、すぐ画面に表示できるようにする。
         await idbSetImage(key, dataUrl);
         mascotImageCache[key] = dataUrl;
         render();
@@ -1672,19 +1671,8 @@ const addSetBtn = document.getElementById('add-set-btn');
       reader.readAsText(file);
     });
   }
-}
 
-applyThemeColors();
-render();
-if (state.settings.mascotEnabled) showMascot('neutral', pickLine('open'));
-loadMascotImageCache();
-
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  });
-}
-// ---- ヘルプモーダル ----
+  // ---- ヘルプモーダル ----
   const helpBtn = document.getElementById('help-btn');
   const closeHelpBtn = document.getElementById('close-help-btn');
   const helpModal = document.getElementById('help-modal');
@@ -1735,3 +1723,4 @@ if ('serviceWorker' in navigator) {
       }
     });
   }
+}
