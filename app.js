@@ -1206,12 +1206,41 @@ function attachEvents() {
       render();
     });
   }
-  document.querySelectorAll('[data-haveto-toggle]').forEach(chk => {
-    chk.addEventListener('change', () => {
+ document.querySelectorAll('[data-haveto-toggle]').forEach(chk => {
+    chk.addEventListener('change', (e) => {
       const item = state.haveToList.items.find(i => i.id === chk.dataset.havetoToggle);
-      if (item) {
-        item.done = chk.checked;
-        saveState();
+      if (!item) return;
+
+      item.done = chk.checked;
+      saveState();
+
+      if (chk.checked) {
+        // チェックされた時にキラキラを飛ばす演出
+        const parentItem = chk.closest('.haveto-item');
+        if (parentItem) {
+          const colors = [state.settings.themeAccent, '#ffd166', '#06d6a0', '#ffffff', '#ff7b00'];
+          for (let i = 0; i < 10; i++) {
+            const dot = document.createElement('span');
+            dot.className = 'sparkle-particle';
+            
+            // チェックボックス付近を中心に散らす
+            dot.style.left = `${chk.offsetLeft + 10}px`;
+            dot.style.top = `${chk.offsetTop + 10}px`;
+            dot.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+            
+            // 飛び散る角度と距離の計算
+            const angle = Math.random() * 2 * Math.PI;
+            const dist = 20 + Math.random() * 35;
+            dot.style.setProperty('--dx', `${Math.cos(angle) * dist}px`);
+            dot.style.setProperty('--dy', `${Math.sin(angle) * dist}px`);
+            
+            parentItem.appendChild(dot);
+            setTimeout(() => dot.remove(), 600);
+          }
+        }
+        // アニメーション完了後に画面描画を更新
+        setTimeout(() => render(), 300);
+      } else {
         render();
       }
     });
