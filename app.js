@@ -579,6 +579,8 @@ function personaInstruction() {
 
 /* ===== ルーター ===== */
 let currentTab = 'home';
+let weeklyViewMode = 'total'; // 'total', 'workout', 'meal' のいずれか
+
 function setTab(tab) {
   currentTab = tab;
   render();
@@ -595,7 +597,16 @@ function computeWeeklyRates() {
     const day = String(d.getDate()).padStart(2, '0');
     dates.push({ key: `${y}-${m}-${day}`, label: `${d.getMonth() + 1}/${d.getDate()}`, isToday: i === 0 });
   }
-  return dates.map(d => ({ ...d, rate: computeAchievementRateForDate(d.key) }));
+  return dates.map(d => {
+    const setCount = state.workoutLogs.filter(l => l.date === d.key).length;
+    const wRate = state.goals.dailySetTarget > 0 ? Math.min(setCount / state.goals.dailySetTarget, 1) * 100 : 0;
+    const calTotal = state.meals.filter(m => m.date === d.key).reduce((s, m) => s + (Number(m.calories) || 0), 0);
+    const mRate = state.goals.dailyCalorieTarget > 0 ? Math.min(calTotal / state.goals.dailyCalorieTarget, 1) * 100 : 0;
+    const tRate = (wRate * 0.6) + (mRate * 0.4);
+    
+    const rate = weeklyViewMode === 'workout' ? wRate : (weeklyViewMode === 'meal' ? mRate : tRate);
+    return { ...d, rate: Math.round(rate) };
+  });
 }
 
 /* ===== 描画: ホーム ===== */
@@ -667,10 +678,15 @@ function renderHome() {
       <div id="daily-advice-text">${escapeHtml(adviceText)}</div>
     </div>
 
-    <p class="section-title">週間の達成率(直近7日間・1日ごとの達成度の平均)</p>
+   <p class="section-title">週間の達成率 (直近7日間)</p>
     <div class="list-card" style="padding:14px 16px; margin-bottom:12px;">
+      <div class="row-3" style="margin-bottom:12px;">
+        <button type="button" class="secondary weekly-toggle-btn" data-mode="total" style="${weeklyViewMode === 'total' ? 'border-color:var(--gold); color:var(--gold);' : ''}">総合</button>
+        <button type="button" class="secondary weekly-toggle-btn" data-mode="workout" style="${weeklyViewMode === 'workout' ? 'border-color:var(--gold); color:var(--gold);' : ''}">筋トレ</button>
+        <button type="button" class="secondary weekly-toggle-btn" data-mode="meal" style="${weeklyViewMode === 'meal' ? 'border-color:var(--gold); color:var(--gold);' : ''}">食事</button>
+      </div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-        <span class="sub">週間平均</span>
+        <span class="sub">${weeklyViewMode === 'workout' ? '筋トレ' : (weeklyViewMode === 'meal' ? '食事' : '総合')}平均</span>
         <span class="val gold" style="font-size:18px; font-weight:500;">${weeklyAvg}%</span>
       </div>
       <div class="weekly-bar-row">
@@ -901,12 +917,17 @@ function renderHistory() {
   const workoutLogs = state.workoutLogs.filter(l => l.date === dateKey);
   const meals = state.meals.filter(m => m.date === dateKey);
 
+  let totalWorkoutKcal = 0;
   const workoutRows = workoutLogs.map(l => {
     const ex = state.exercises.find(e => e.id === l.exerciseId);
     const parts = [];
     if (l.weight !== undefined) parts.push(`${l.weight}kg`);
     if (l.reps !== undefined) parts.push(`${l.reps}回`);
     if (l.time !== undefined) parts.push(formatDuration(l.time));
+    
+    const kcal = computeCaloriesBurned(ex, l);
+    if (kcal !== null) totalWorkoutKcal += kcal;
+
     return `
       <div class="list-row">
         <span class="val">${escapeHtml(ex ? ex.name : '削除済種目')} <span class="sub">${parts.join(' × ')}</span></span>
@@ -914,14 +935,20 @@ function renderHistory() {
       </div>`;
   }).join('');
 
-  const mealRows = meals.map(m => `
+  let totalMealKcal = 0;
+  const mealRows = meals.map(m => {
+    totalMealKcal += (Number(m.calories) || 0);
+    return `
     <div class="list-row">
       <span class="val">${escapeHtml(m.name)} <span class="sub">${m.category}</span></span>
       <span style="display:flex; align-items:center; gap:8px;">
         <span class="val gold">${Number(m.calories).toLocaleString()} kcal</span>
         <button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button>
       </span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+
+  const netKcal = totalMealKcal - totalWorkoutKcal;
 
   const firstDay = new Date(calendarYear, calendarMonth - 1, 1).getDay();
   const daysInMonth = new Date(calendarYear, calendarMonth, 0).getDate();
@@ -946,7 +973,15 @@ function renderHistory() {
     <p class="section-title">${selectedHistoryDate} の筋トレ記録</p>
     <div class="list-card" style="margin-bottom:16px;">${workoutRows || `<div class="empty-hint">この日の筋トレ記録はありません</div>`}</div>
     <p class="section-title">${selectedHistoryDate} の食事記録</p>
-    <div class="list-card">${mealRows || `<div class="empty-hint">この日の食事記録はありません</div>`}</div>
+    <div class="list-card" style="margin-bottom:16px;">${mealRows || `<div class="empty-hint">この日の食事記録はありません</div>`}</div>
+    
+    <p class="section-title">本日の総括</p>
+    <div class="list-card" style="margin-top:8px;">
+      <div class="total-row">
+        <span class="label">総合カロリー (食事 - 筋トレ)</span>
+        <span class="value">${netKcal.toLocaleString()} kcal</span>
+      </div>
+    </div>
   `;
 }
 
@@ -1139,6 +1174,13 @@ function render() {
 
 function attachEvents() {
   document.querySelectorAll('[data-tab]').forEach(btn => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
+
+  document.querySelectorAll('.weekly-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      weeklyViewMode = btn.dataset.mode;
+      render();
+    });
+  });
 
   // ---- ホーム: Have To リスト ----
   const addHaveToBtn = document.getElementById('add-haveto-btn');
