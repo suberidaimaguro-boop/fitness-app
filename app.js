@@ -86,7 +86,74 @@ let favListOpen = false;
 let exerciseListOpen = false;
 let themeAccentOpen = false;
 let themeBgOpen = false;
+/* ===== 運動タイマー(バックグラウンド復帰対応) =====
+   開始「時刻」だけを保存しておき、経過時間は常に「今の時刻 − 開始時刻」で
+   計算する方式。画面ロックやアプリ切り替えでsetIntervalが止まっても、
+   復帰した瞬間に正しい経過時間へ復元できる。 */
+const TIMER_STORAGE_KEY = 'fitnessActiveTimer';
 
+function loadActiveTimer() {
+  try {
+    const raw = localStorage.getItem(TIMER_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function saveActiveTimer(timer) {
+  try {
+    if (timer) localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify(timer));
+    else localStorage.removeItem(TIMER_STORAGE_KEY);
+  } catch (e) {}
+}
+
+let activeTimer = loadActiveTimer(); // { exerciseId, startedAt } または null
+let timerTickInterval = null;
+
+function currentTimerSeconds() {
+  if (!activeTimer) return 0;
+  return Math.floor((Date.now() - activeTimer.startedAt) / 1000);
+}
+
+function startTimer(exerciseId) {
+  activeTimer = { exerciseId, startedAt: Date.now() };
+  saveActiveTimer(activeTimer);
+  render();
+}
+
+function stopTimerAndFillInput() {
+  if (!activeTimer) return;
+  const seconds = currentTimerSeconds();
+  activeTimer = null;
+  saveActiveTimer(null);
+  render();
+  // レンダー後にinputへ反映(inputは記録用の既存フィールドをそのまま使う)
+  const timeInput = document.getElementById('input-time');
+  const unitSelect = document.getElementById('input-time-unit');
+  if (timeInput) timeInput.value = seconds;
+  if (unitSelect) unitSelect.value = '1'; // 秒
+}
+
+function startTimerTickDisplay() {
+  if (timerTickInterval) clearInterval(timerTickInterval);
+  timerTickInterval = setInterval(() => {
+    const el = document.getElementById('timer-live-display');
+    if (el && activeTimer) {
+      el.textContent = formatDuration(currentTimerSeconds());
+    }
+  }, 1000);
+}
+
+// アプリに戻ってきた瞬間に、止まっていた表示を即座に正しい時間へ更新する
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && activeTimer) {
+    const el = document.getElementById('timer-live-display');
+    if (el) el.textContent = formatDuration(currentTimerSeconds());
+  }
+});
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -526,7 +593,18 @@ function renderWorkout() {
   const inputs = [];
   if (ex.trackWeight) inputs.push(`<div class="field"><label>重量 (kg)</label><input type="number" id="input-weight" inputmode="decimal" placeholder="60"></div>`);
   if (ex.trackReps) inputs.push(`<div class="field"><label>回数</label><input type="number" id="input-reps" inputmode="numeric" placeholder="10"></div>`);
-  if (ex.trackTime) inputs.push(`<div class="field"><label>時間</label><div class="row-2"><input type="number" id="input-time" inputmode="numeric" placeholder="30"><select id="input-time-unit"><option value="1">秒</option><option value="60">分</option><option value="3600">時間</option></select></div></div>`);
+  if (ex.trackTime) {
+    const isRunningThis = activeTimer && activeTimer.exerciseId === ex.id;
+    inputs.push(`
+      <div class="field">
+        <label>時間 (計測 または 手入力)</label>
+        <div class="row-2" style="margin-bottom:8px;">
+          <span id="timer-live-display" style="font-size:22px; font-weight:600; display:flex; align-items:center;">${formatDuration(isRunningThis ? currentTimerSeconds() : 0)}</span>
+          <button type="button" class="secondary" id="timer-toggle-btn" data-exercise-id="${ex.id}">${isRunningThis ? '⏹ 停止して反映' : '▶ 計測開始'}</button>
+        </div>
+        <div class="row-2"><input type="number" id="input-time" inputmode="numeric" placeholder="30"><select id="input-time-unit"><option value="1">秒</option><option value="60">分</option><option value="3600">時間</option></select></div>
+      </div>`);
+  }
 
   const logs = currentLogWorkouts().filter(l => l.exerciseId === ex.id);
   let totalBurned = 0;
@@ -767,7 +845,16 @@ function renderSettings() {
 
    <!-- 3. 種目設定 -->
     <p class="section-title">種目設定</p>
-    <div class="field"><label>新しい種目を追加</label><input type="text" id="new-exercise-name" placeholder="例: ベンチプレス、プランク"></div>
+        <div class="field"><label>新しい種目を追加</label><input type="text" id="new-exercise-name" placeholder="例: ベンチプレス、プランク"></div>
+    <div class="field">
+      <label>運動強度 (消費カロリー計算に使用)</label>
+      <select id="new-exercise-met">
+        <option value="3.0">軽め</option>
+        <option value="5.0" selected>普通</option>
+        <option value="7.0">きつい</option>
+        <option value="9.0">非常にきつい</option>
+      </select>
+    </div>
     <div class="field">
       <label>記録項目 (複数選択可)</label>
       <div style="display:flex; gap:16px; align-items:center; padding:6px 0;">
@@ -963,6 +1050,17 @@ function attachEvents() {
       render();
     });
   }
+    const timerToggleBtn = document.getElementById('timer-toggle-btn');
+  if (timerToggleBtn) {
+    timerToggleBtn.addEventListener('click', () => {
+      if (activeTimer && activeTimer.exerciseId === timerToggleBtn.dataset.exerciseId) {
+        stopTimerAndFillInput();
+      } else {
+        startTimer(timerToggleBtn.dataset.exerciseId);
+      }
+    });
+  }
+  if (activeTimer) startTimerTickDisplay();
   const addSetBtn = document.getElementById('add-set-btn');
   if (addSetBtn) {
     addSetBtn.addEventListener('click', async () => {
@@ -1151,13 +1249,14 @@ function attachEvents() {
         return;
       }
 
+            const met = Number(document.getElementById('new-exercise-met').value) || 5.0;
       state.exercises.push({
         id: uid(),
         name,
         trackWeight,
         trackReps,
         trackTime,
-        met: 5.0
+        met
       });
       saveState();
       exerciseListOpen = true;
