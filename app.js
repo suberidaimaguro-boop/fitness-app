@@ -91,6 +91,113 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+/* ===== マスコット画像専用の保存先 (IndexedDB) =====
+   localStorageは容量が小さく(数MB程度)、画像をBase64で
+   大量に持つと容量不足でアプリ全体の保存が失敗する恐れがあるため、
+   マスコット画像だけはIndexedDBに分離して保存する。
+   画面描画は同期処理なので、IndexedDBから読み込んだ内容は
+   mascotImageCache というメモリ上のオブジェクトにも保持しておき、
+   getMascotImage() はこのキャッシュを同期的に参照する。 */
+const IDB_DB_NAME = 'fitnessAppMascotDB';
+const IDB_STORE_NAME = 'mascotImages';
+let idbInstance = null;
+let mascotImageCache = {}; // key: `${setId}::${expression}` -> dataURL
+
+function mascotImageKey(setId, expression) {
+  return `${setId}::${expression}`;
+}
+
+function openMascotImageDB() {
+  if (idbInstance) return Promise.resolve(idbInstance);
+  if (!('indexedDB' in window)) return Promise.reject(new Error('indexedDB unsupported'));
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE_NAME)) {
+        db.createObjectStore(IDB_STORE_NAME);
+      }
+    };
+    req.onsuccess = () => { idbInstance = req.result; resolve(idbInstance); };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbSetImage(key, dataUrl) {
+  const db = await openMascotImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE_NAME, 'readwrite');
+    tx.objectStore(IDB_STORE_NAME).put(dataUrl, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function idbDeleteImage(key) {
+  const db = await openMascotImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE_NAME, 'readwrite');
+    tx.objectStore(IDB_STORE_NAME).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function idbGetAllImages() {
+  const db = await openMascotImageDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE_NAME, 'readonly');
+    const store = tx.objectStore(IDB_STORE_NAME);
+    const keysReq = store.getAllKeys();
+    const valuesReq = store.getAll();
+    tx.oncomplete = () => {
+      const result = {};
+      keysReq.result.forEach((k, i) => { result[k] = valuesReq.result[i]; });
+      resolve(result);
+    };
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// 旧バージョン(localStorage内に画像を直接保存していた頃)からの引っ越し処理。
+// state.settings.mascotSets[].images に生のdataURLが残っていたらIndexedDBへ移し、
+// localStorage側からは削除して軽量化する。1回移行が終われば以後は何もしない。
+async function migrateMascotImagesToIDB() {
+  try {
+    const sets = state.settings.mascotSets || [];
+    let migratedAny = false;
+    for (const set of sets) {
+      if (!set.images) continue;
+      for (const exp of Object.keys(set.images)) {
+        const val = set.images[exp];
+        if (typeof val === 'string' && val.startsWith('data:')) {
+          await idbSetImage(mascotImageKey(set.id, exp), val);
+          mascotImageCache[mascotImageKey(set.id, exp)] = val;
+          delete set.images[exp];
+          migratedAny = true;
+        }
+      }
+    }
+    if (migratedAny) saveState();
+  } catch (e) {
+    // IndexedDBが使えない環境ではlocalStorageの画像をそのまま使い続ける(フォールバック)
+    console.warn('マスコット画像の移行に失敗しました:', e);
+  }
+}
+
+// 起動時にIndexedDBの内容をメモリキャッシュへロードしてから再描画する
+async function loadMascotImageCache() {
+  try {
+    await migrateMascotImagesToIDB();
+    const all = await idbGetAllImages();
+    mascotImageCache = { ...mascotImageCache, ...all };
+    render();
+    renderMascot();
+  } catch (e) {
+    console.warn('マスコット画像の読み込みに失敗しました:', e);
+  }
+}
+
 const TRASH_ICON_SVG = `
 <svg viewBox="0 0 24 24">
   <path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12M9 7V4a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
@@ -209,6 +316,9 @@ const MASCOT_PLACEHOLDER = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
 
 function getMascotImage(exp) {
   const active = getActiveSet();
+  const cached = mascotImageCache[mascotImageKey(active.id, exp)];
+  if (cached) return cached;
+  // IndexedDBの読み込み前や未対応環境向けのフォールバック(旧localStorage形式)
   return (active.images && active.images[exp]) || MASCOT_PLACEHOLDER;
 }
 
@@ -1106,12 +1216,14 @@ function attachEvents() {
       try {
         const dataUrl = await resizeImageFile(file);
         const active = getActiveSet();
-        if (!active.images) active.images = {};
-        active.images[input.dataset.expression] = dataUrl;
-        saveState();
+        const key = mascotImageKey(active.id, input.dataset.expression);
+        // 画像本体はIndexedDBに保存(localStorage/stateには入れない)。
+        // メモリキャッシュにも反映して、すぐ画面に表示できるようにする。
+        await idbSetImage(key, dataUrl);
+        mascotImageCache[key] = dataUrl;
         render();
       } catch (e) {
-        alert('画像の読み込みに失敗しました');
+        alert('画像の保存に失敗しました。端末の空き容量をご確認ください。');
       }
     });
   });
@@ -1227,6 +1339,7 @@ function attachEvents() {
 applyThemeColors();
 render();
 if (state.settings.mascotEnabled) showMascot('neutral', pickLine('open'));
+loadMascotImageCache();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
