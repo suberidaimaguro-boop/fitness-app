@@ -90,10 +90,8 @@ let favListOpen = false;
 let exerciseListOpen = false;
 let themeAccentOpen = false;
 let themeBgOpen = false;
-/* ===== 運動タイマー(バックグラウンド復帰対応) =====
-   開始「時刻」だけを保存しておき、経過時間は常に「今の時刻 − 開始時刻」で
-   計算する方式。画面ロックやアプリ切り替えでsetIntervalが止まっても、
-   復帰した瞬間に正しい経過時間へ復元できる。 */
+
+/* ===== 運動タイマー ===== */
 const TIMER_STORAGE_KEY = 'fitnessActiveTimer';
 
 function loadActiveTimer() {
@@ -110,7 +108,7 @@ function saveActiveTimer(timer) {
   } catch (e) {}
 }
 
-let activeTimer = loadActiveTimer(); // { exerciseId, startedAt } または null
+let activeTimer = loadActiveTimer();
 let timerTickInterval = null;
 
 function currentTimerSeconds() {
@@ -130,11 +128,10 @@ function stopTimerAndFillInput() {
   activeTimer = null;
   saveActiveTimer(null);
   render();
-  // レンダー後にinputへ反映(inputは記録用の既存フィールドをそのまま使う)
   const timeInput = document.getElementById('input-time');
   const unitSelect = document.getElementById('input-time-unit');
   if (timeInput) timeInput.value = seconds;
-  if (unitSelect) unitSelect.value = '1'; // 秒
+  if (unitSelect) unitSelect.value = '1';
 }
 
 function startTimerTickDisplay() {
@@ -147,7 +144,6 @@ function startTimerTickDisplay() {
   }, 1000);
 }
 
-// アプリに戻ってきた瞬間に、止まっていた表示を即座に正しい時間へ更新する
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && activeTimer) {
     const el = document.getElementById('timer-live-display');
@@ -158,21 +154,12 @@ document.addEventListener('visibilitychange', () => {
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
-function uid() {
-  return Math.random().toString(36).slice(2, 10);
-}
 
-/* ===== マスコット画像専用の保存先 (IndexedDB) =====
-   localStorageは容量が小さく(数MB程度)、画像をBase64で
-   大量に持つと容量不足でアプリ全体の保存が失敗する恐れがあるため、
-   マスコット画像だけはIndexedDBに分離して保存する。
-   画面描画は同期処理なので、IndexedDBから読み込んだ内容は
-   mascotImageCache というメモリ上のオブジェクトにも保持しておき、
-   getMascotImage() はこのキャッシュを同期的に参照する。 */
+/* ===== マスコット画像専用の保存先 (IndexedDB) ===== */
 const IDB_DB_NAME = 'fitnessAppMascotDB';
 const IDB_STORE_NAME = 'mascotImages';
 let idbInstance = null;
-let mascotImageCache = {}; // key: `${setId}::${expression}` -> dataURL
+let mascotImageCache = {};
 
 function mascotImageKey(setId, expression) {
   return `${setId}::${expression}`;
@@ -230,9 +217,6 @@ async function idbGetAllImages() {
   });
 }
 
-// 旧バージョン(localStorage内に画像を直接保存していた頃)からの引っ越し処理。
-// state.settings.mascotSets[].images に生のdataURLが残っていたらIndexedDBへ移し、
-// localStorage側からは削除して軽量化する。1回移行が終われば以後は何もしない。
 async function migrateMascotImagesToIDB() {
   try {
     const sets = state.settings.mascotSets || [];
@@ -251,12 +235,10 @@ async function migrateMascotImagesToIDB() {
     }
     if (migratedAny) saveState();
   } catch (e) {
-    // IndexedDBが使えない環境ではlocalStorageの画像をそのまま使い続ける(フォールバック)
     console.warn('マスコット画像の移行に失敗しました:', e);
   }
 }
 
-// 起動時にIndexedDBの内容をメモリキャッシュへロードしてから再描画する
 async function loadMascotImageCache() {
   try {
     await migrateMascotImagesToIDB();
@@ -389,7 +371,6 @@ function getMascotImage(exp) {
   const active = getActiveSet();
   const cached = mascotImageCache[mascotImageKey(active.id, exp)];
   if (cached) return cached;
-  // IndexedDBの読み込み前や未対応環境向けのフォールバック(旧localStorage形式)
   return (active.images && active.images[exp]) || MASCOT_PLACEHOLDER;
 }
 
@@ -482,7 +463,6 @@ function applyMascotPosition(wrap) {
     wrap.style.right = 'auto';
     wrap.style.bottom = 'auto';
   } else {
-    // デフォルト位置: 右上(タブに被らない位置)
     wrap.style.left = 'auto';
     wrap.style.right = '14px';
     wrap.style.top = 'max(76px, calc(env(safe-area-inset-top, 0px) + 66px))';
@@ -579,7 +559,7 @@ function personaInstruction() {
 
 /* ===== ルーター ===== */
 let currentTab = 'home';
-let weeklyViewMode = 'total'; // 'total', 'workout', 'meal' のいずれか
+let weeklyViewMode = 'total'; // 'total', 'workout', 'meal' 
 
 function setTab(tab) {
   currentTab = tab;
@@ -678,7 +658,7 @@ function renderHome() {
       <div id="daily-advice-text">${escapeHtml(adviceText)}</div>
     </div>
 
-   <p class="section-title">週間の達成率 (直近7日間)</p>
+    <p class="section-title">週間の達成率 (直近7日間)</p>
     <div class="list-card" style="padding:14px 16px; margin-bottom:12px;">
       <div class="row-3" style="margin-bottom:12px;">
         <button type="button" class="secondary weekly-toggle-btn" data-mode="total" style="${weeklyViewMode === 'total' ? 'border-color:var(--gold); color:var(--gold);' : ''}">総合</button>
@@ -836,13 +816,11 @@ async function addMealRecord(name, calNum, category) {
   const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
   const apiKey = state.settings.geminiApiKey;
 
-  // 目標カロリーを超えたら怒る (AIまたは定型)
   if (target > 0 && afterTotal > target) {
     showMascot('angry', 'カロリーオーバー確認中…', false);
     const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。ちょっと怒りながらも愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
     showMascot('angry', aiText || pickLine('mealOverAngry'), true, true);
   } else if (apiKey) {
-    // APIキーがあれば栄養バランスの観点でコメント
     showMascot(category === '間食' ? 'angry' : 'smile', '栄養バランス確認中…', false);
     const expr = category === '間食' ? 'angry' : 'smile';
     const prompt = `ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
@@ -888,13 +866,13 @@ function renderMeal() {
       <label>記録する日付</label>
       <input type="date" id="active-log-date-meal" value="${activeLogDate}">
     </div>
-  <div class="field"><label>区分</label><select id="meal-category-select">${MEAL_CATEGORIES.map(c => `<option value="${c}" ${c === selectedMealCategory ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+    <div class="field"><label>区分</label><select id="meal-category-select">${MEAL_CATEGORIES.map(c => `<option value="${c}" ${c === selectedMealCategory ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
     
     <div class="field">
       <label>食べたもの</label>
       <input type="text" id="meal-name" list="meal-history-list" placeholder="鶏むね肉のサラダ">
       <datalist id="meal-history-list">
-        ${[...new Set(state.meals.map(m => m.name))].map(n => `<option value="${escapeHtml(n)}">`).join('')}
+        ${[...new Set(state.meals.map(m => m.name))].map(n => `<option value="${escapeHtml(n)}"></option>`).join('')}
       </datalist>
     </div>
     
@@ -1034,7 +1012,7 @@ function renderSettings() {
     <div class="field"><label>1日のカロリー上限 (kcal)</label><input type="number" id="goal-calories" value="${state.goals.dailyCalorieTarget}"></div>
     <button class="primary" id="save-goals-btn" style="margin-bottom:20px;">目標を保存</button>
 
-   <!-- 3. 種目設定 -->
+    <!-- 3. 種目設定 -->
     <p class="section-title">種目設定</p>
         <div class="field"><label>新しい種目を追加</label><input type="text" id="new-exercise-name" placeholder="例: ベンチプレス、プランク"></div>
     <div class="field">
@@ -1053,7 +1031,7 @@ function renderSettings() {
     </button>
     ${exerciseListOpen ? `<div class="list-card" style="margin-bottom:20px;">${exerciseRows || `<div class="empty-hint">まだ種目がありません</div>`}</div>` : ''}
 
-    <!-- 4. キャラクター設定 (OFFの時は詳細を隠す) -->
+    <!-- 4. キャラクター設定 -->
     <p class="section-title">キャラクター設定</p>
     <div class="list-card" style="padding:4px 16px; margin-bottom:16px;">
       <div class="toggle-row">
@@ -1099,7 +1077,7 @@ function renderSettings() {
       </div>
     ` : ''}
 
-    <!-- 5. AI機能設定 (常時表示・画像判定とキャラ会話両方に対応) -->
+    <!-- 5. AI機能設定 -->
     <p class="section-title">AI機能設定 (任意)</p>
     <div class="field">
       <label>Gemini APIキー (画像解析・応援コメントに使用)</label>
@@ -1719,8 +1697,19 @@ function attachEvents() {
       const pastMeal = state.meals.find(m => m.name === name);
       const calInput = document.getElementById('meal-calories');
       if (pastMeal && !calInput.value) {
-        calInput.value = pastMeal.calories; // 過去の履歴からカロリーを自動補完
+        calInput.value = pastMeal.calories;
       }
     });
   }
+}
+
+applyThemeColors();
+render();
+if (state.settings.mascotEnabled) showMascot('neutral', pickLine('open'));
+loadMascotImageCache();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
 }
