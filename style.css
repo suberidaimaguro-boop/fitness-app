@@ -278,12 +278,31 @@ button.secondary {
 }
 
 .delete-btn {
-  background: none;
+  background: transparent;
   border: none;
   color: var(--text-muted);
-  font-size: 18px;
-  padding: 4px 6px;
-  line-height: 1;
+  cursor: pointer;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.delete-btn:active {
+  color: var(--danger);
+  background: rgba(216, 90, 74, 0.12);
+}
+
+.delete-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* ---- Bottom nav ---- */
@@ -320,17 +339,16 @@ button.secondary {
 
 .icon { display: inline-flex; }
 
-/* ---- マスコット ---- */
+/* ---- マスコット(ドラッグ可能) ---- */
 .mascot-wrap {
   position: fixed;
-  right: 14px;
-  bottom: 84px;
   z-index: 20;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
   max-width: 240px;
+  touch-action: none;
 }
 
 .mascot-bubble {
@@ -361,8 +379,13 @@ button.secondary {
   border: 2px solid var(--gold);
   background: var(--surface);
   padding: 0;
-  cursor: pointer;
+  cursor: grab;
   animation: mascot-bob 2.6s ease-in-out infinite;
+}
+
+.mascot-avatar-btn.dragging {
+  cursor: grabbing;
+  animation: none;
 }
 
 .mascot-avatar-btn img {
@@ -371,6 +394,8 @@ button.secondary {
   object-fit: cover;
   object-position: center 15%;
   display: block;
+  pointer-events: none;
+  -webkit-user-drag: none;
 }
 
 @keyframes mascot-bob {
@@ -489,50 +514,21 @@ button.secondary {
 .calendar-day.selected .cal-dot {
   background: var(--gold-on);
 }
-/* ---- ゴミ箱削除ボタンの改善 ---- */
-.delete-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  transition: color 0.15s, background-color 0.15s;
-}
 
-.delete-btn:active {
-  color: var(--danger);
-  background: rgba(216, 90, 74, 0.12);
-}
-
-.delete-btn svg {
-  width: 18px;
-  height: 18px;
-  stroke: currentColor;
-  stroke-width: 2;
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
 /* ===== 記録追加時の外枠ネオングロー演出 ===== */
 .screen-glow-overlay {
   position: fixed;
   inset: 0;
-  pointer-events: none; /* ボタン操作を一切邪魔しない */
+  pointer-events: none;
   z-index: 9999;
   opacity: 0;
 }
 
-/* 筋トレ: ネオンオレンジの発光 */
 .screen-glow-overlay.glow-workout {
   box-shadow: inset 0 0 45px 12px rgba(255, 120, 0, 0.75),
               inset 0 0 100px 30px rgba(255, 80, 0, 0.35);
   animation: neonPulse 0.65s ease-out forwards;
 }
-/* 食事: 蛍光グリーンの発光 */
 .screen-glow-overlay.glow-meal {
   box-shadow: inset 0 0 45px 12px rgba(0, 255, 140, 0.75),
               inset 0 0 100px 30px rgba(0, 230, 110, 0.35);
@@ -540,19 +536,11 @@ button.secondary {
 }
 
 @keyframes neonPulse {
-  0% {
-    opacity: 0;
-    transform: scale(0.99);
-  }
-  25% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1);
-  }
+  0% { opacity: 0; transform: scale(0.99); }
+  25% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
 }
+
 /* ---- アコーディオン ---- */
 .accordion-toggle {
   width: 100%;
@@ -609,7 +597,8 @@ button.secondary {
   border: 2px solid transparent;
   cursor: pointer;
   box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-}/* ---- どんな背景色でも絶対に見える微調整カラーボタン ---- */
+}
+
 .color-picker-trigger {
   position: relative;
   display: inline-flex;
@@ -632,7 +621,6 @@ button.secondary {
   overflow: hidden;
 }
 
-/* 本体の見えづらいinputは透明にしてボタン全体に被せる */
 .color-picker-hidden {
   position: absolute;
   inset: 0;
@@ -657,6 +645,7 @@ button.secondary {
   border-color: #ffffff;
   transform: scale(1.1);
 }
+
 /* ---- iPhoneの自動ズーム防止 (16px以上にする) ---- */
 input[type="text"],
 input[type="number"],
@@ -664,6 +653,7 @@ input[type="date"],
 select {
   font-size: 16px !important;
 }
+
 /* ---- BMI詳細アドバイスカード ---- */
 .bmi-detail-box {
   background: var(--surface);
@@ -678,4 +668,55 @@ select {
 }
 .bmi-detail-box strong {
   color: var(--gold);
+}
+
+/* ---- ひとことアドバイスカード ---- */
+.advice-card {
+  background: linear-gradient(135deg, rgba(239,162,39,0.14), rgba(239,162,39,0.03));
+  border: 0.5px solid rgba(239,162,39,0.35);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.advice-card i {
+  color: var(--gold);
+  font-size: 18px;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+/* ---- 週間達成率バー ---- */
+.weekly-bar-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 64px;
+  margin: 8px 0 4px;
+}
+.weekly-bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 4px;
+}
+.weekly-bar {
+  width: 100%;
+  max-width: 22px;
+  background: var(--border-strong);
+  border-radius: 4px 4px 0 0;
+  min-height: 3px;
+}
+.weekly-bar.today { background: var(--gold); }
+.weekly-bar-label {
+  font-size: 10px;
+  color: var(--text-muted);
 }
