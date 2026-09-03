@@ -32,10 +32,12 @@ function defaultState() {
       activeMascotSetId: 'set_default',
       mascotSets: [{ id: 'set_default', name: 'デフォルト', images: {} }],
       themeAccent: '#d4a373',
-      themeBg: '#121212'
+      themeBg: '#121212',
+      mascotPosition: null
     },
     favoriteMeals: [],
-    haveToList: { date: todayKey(), items: [] }
+    haveToList: { date: todayKey(), items: [] },
+    dailyAdvicePinned: null
   };
 }
 
@@ -53,6 +55,8 @@ function loadState() {
       if (!parsed.settings.themeAccent) parsed.settings.themeAccent = '#d4a373';
       if (!parsed.settings.themeBg) parsed.settings.themeBg = '#121212';
       if (parsed.settings.bodyHeightCm === undefined) parsed.settings.bodyHeightCm = null;
+      if (parsed.settings.mascotPosition === undefined) parsed.settings.mascotPosition = null;
+      if (parsed.dailyAdvicePinned === undefined) parsed.dailyAdvicePinned = null;
       if (!parsed.haveToList || parsed.haveToList.date !== todayKey()) {
         parsed.haveToList = { date: todayKey(), items: [] };
       }
@@ -445,12 +449,20 @@ let mascotMessage = '';
 let mascotBubbleVisible = false;
 let mascotHideTimer = null;
 
-function showMascot(expression, message, autoHide = true) {
+function showMascot(expression, message, autoHide = true, pin = false) {
   if (!state.settings.mascotEnabled) return;
   mascotExpression = expression;
   mascotMessage = message;
   mascotBubbleVisible = true;
   renderMascot();
+  if (pin && message) {
+    state.dailyAdvicePinned = { date: todayKey(), text: message };
+    saveState();
+    if (currentTab === 'home') {
+      const el = document.getElementById('daily-advice-text');
+      if (el) el.textContent = message;
+    }
+  }
   if (mascotHideTimer) clearTimeout(mascotHideTimer);
   if (autoHide) {
     mascotHideTimer = setTimeout(() => {
@@ -458,6 +470,74 @@ function showMascot(expression, message, autoHide = true) {
       renderMascot();
     }, 5000);
   }
+}
+
+let mascotDragState = null;
+
+function applyMascotPosition(wrap) {
+  const pos = state.settings.mascotPosition;
+  if (pos) {
+    wrap.style.left = `${pos.xPercent}%`;
+    wrap.style.top = `${pos.yPercent}%`;
+    wrap.style.right = 'auto';
+    wrap.style.bottom = 'auto';
+  } else {
+    // デフォルト位置: 右上(タブに被らない位置)
+    wrap.style.left = 'auto';
+    wrap.style.right = '14px';
+    wrap.style.top = 'max(76px, calc(env(safe-area-inset-top, 0px) + 66px))';
+    wrap.style.bottom = 'auto';
+  }
+}
+
+function attachMascotDrag(btn, wrap) {
+  const onPointerDown = (e) => {
+    const rect = wrap.getBoundingClientRect();
+    mascotDragState = {
+      startX: e.clientX,
+      startY: e.clientY,
+      originLeft: rect.left,
+      originTop: rect.top,
+      moved: false
+    };
+    btn.classList.add('dragging');
+    try { btn.setPointerCapture(e.pointerId); } catch (err) {}
+  };
+  const onPointerMove = (e) => {
+    if (!mascotDragState) return;
+    const dx = e.clientX - mascotDragState.startX;
+    const dy = e.clientY - mascotDragState.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) mascotDragState.moved = true;
+    if (!mascotDragState.moved) return;
+    const maxLeft = Math.max(0, window.innerWidth - wrap.offsetWidth);
+    const maxTop = Math.max(0, window.innerHeight - wrap.offsetHeight);
+    const newLeft = Math.min(Math.max(0, mascotDragState.originLeft + dx), maxLeft);
+    const newTop = Math.min(Math.max(0, mascotDragState.originTop + dy), maxTop);
+    wrap.style.left = `${newLeft}px`;
+    wrap.style.top = `${newTop}px`;
+    wrap.style.right = 'auto';
+    wrap.style.bottom = 'auto';
+  };
+  const onPointerUp = (e) => {
+    if (!mascotDragState) return;
+    btn.classList.remove('dragging');
+    if (mascotDragState.moved) {
+      const rect = wrap.getBoundingClientRect();
+      state.settings.mascotPosition = {
+        xPercent: (rect.left / window.innerWidth) * 100,
+        yPercent: (rect.top / window.innerHeight) * 100
+      };
+      saveState();
+    } else {
+      mascotBubbleVisible = !mascotBubbleVisible;
+      renderMascot();
+    }
+    mascotDragState = null;
+  };
+  btn.addEventListener('pointerdown', onPointerDown);
+  btn.addEventListener('pointermove', onPointerMove);
+  btn.addEventListener('pointerup', onPointerUp);
+  btn.addEventListener('pointercancel', onPointerUp);
 }
 
 function renderMascot() {
@@ -468,13 +548,9 @@ function renderMascot() {
     <div class="mascot-bubble ${mascotBubbleVisible ? 'show' : ''}">${escapeHtml(mascotMessage)}</div>
     <button class="mascot-avatar-btn" id="mascot-avatar-btn"><img src="${getMascotImage(mascotExpression)}" alt="キャラ"></button>
   `;
+  applyMascotPosition(wrap);
   const btn = document.getElementById('mascot-avatar-btn');
-  if (btn) {
-    btn.addEventListener('click', () => {
-      mascotBubbleVisible = !mascotBubbleVisible;
-      renderMascot();
-    });
-  }
+  if (btn) attachMascotDrag(btn, wrap);
 }
 
 async function fetchGeminiComment(prompt) {
@@ -508,6 +584,20 @@ function setTab(tab) {
   render();
 }
 
+function computeWeeklyRates() {
+  const dates = [];
+  const cur = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(cur);
+    d.setDate(d.getDate() - i);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    dates.push({ key: `${y}-${m}-${day}`, label: `${d.getMonth() + 1}/${d.getDate()}`, isToday: i === 0 });
+  }
+  return dates.map(d => ({ ...d, rate: computeAchievementRateForDate(d.key) }));
+}
+
 /* ===== 描画: ホーム ===== */
 function renderHome() {
   const rate = computeAchievementRate();
@@ -524,6 +614,13 @@ function renderHome() {
       <button type="button" class="delete-btn" data-haveto-delete="${item.id}">${TRASH_ICON_SVG}</button>
     </div>
   `).join('');
+
+  const weekly = computeWeeklyRates();
+  const weeklyAvg = Math.round(weekly.reduce((s, d) => s + d.rate, 0) / weekly.length);
+  const pinned = state.dailyAdvicePinned;
+  const adviceText = (pinned && pinned.date === todayKey() && pinned.text)
+    ? pinned.text
+    : '記録すると、キャラが今日のひとことアドバイスをくれるよ。';
 
   return `
     <div class="gauge-wrap">
@@ -563,11 +660,34 @@ function renderHome() {
         ${havetoItems || `<div class="empty-hint">今日のタスクはありません</div>`}
       </div>
     </div>
+
+    <p class="section-title">今日のひとことアドバイス</p>
+    <div class="advice-card">
+      <i class="ti ti-bulb"></i>
+      <div id="daily-advice-text">${escapeHtml(adviceText)}</div>
+    </div>
+
+    <p class="section-title">週間の達成率(直近7日間・1日ごとの達成度の平均)</p>
+    <div class="list-card" style="padding:14px 16px; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <span class="sub">週間平均</span>
+        <span class="val gold" style="font-size:18px; font-weight:500;">${weeklyAvg}%</span>
+      </div>
+      <div class="weekly-bar-row">
+        ${weekly.map(d => `
+          <div class="weekly-bar-col">
+            <div class="weekly-bar ${d.isToday ? 'today' : ''}" style="height:${Math.max(3, d.rate)}%;"></div>
+            <span class="weekly-bar-label">${d.label}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
   `;
 }
 
 /* ===== 描画: 筋トレ ===== */
 let selectedExerciseId = null;
+let selectedMetValue = null;
 
 function formatDuration(seconds) {
   if (seconds >= 3600) return `${Math.floor(seconds / 3600)}時間${Math.round((seconds % 3600) / 60)}分`;
@@ -580,7 +700,8 @@ function computeCaloriesBurned(ex, log) {
   if (!weight) return null;
   let durationHours = log.time !== undefined ? log.time / 3600 : (log.reps !== undefined ? (log.reps * 3) / 3600 : null);
   if (durationHours === null) return null;
-  return Math.round(((ex && ex.met) || 5.0) * weight * durationHours);
+  const met = log.met || (ex && ex.met) || 5.0;
+  return Math.round(met * weight * durationHours);
 }
 
 function renderWorkout() {
@@ -628,6 +749,15 @@ function renderWorkout() {
       <input type="date" id="active-log-date-workout" value="${activeLogDate}">
     </div>
     <div class="field"><label>種目</label><select id="exercise-select">${state.exercises.map(e => `<option value="${e.id}" ${e.id === ex.id ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}</select></div>
+    <div class="field">
+      <label>運動強度(今回の記録用・消費カロリー計算に使用)</label>
+      <select id="input-met">
+        <option value="3.0" ${(selectedMetValue ?? (ex.met || 5.0)) == 3.0 ? 'selected' : ''}>軽め</option>
+        <option value="5.0" ${(selectedMetValue ?? (ex.met || 5.0)) == 5.0 ? 'selected' : ''}>普通</option>
+        <option value="7.0" ${(selectedMetValue ?? (ex.met || 5.0)) == 7.0 ? 'selected' : ''}>きつい</option>
+        <option value="9.0" ${(selectedMetValue ?? (ex.met || 5.0)) == 9.0 ? 'selected' : ''}>非常にきつい</option>
+      </select>
+    </div>
     ${inputs.join('')}
     <button class="primary" id="add-set-btn">記録を追加</button>
     <p class="section-title">${activeLogDate === todayKey() ? '今日' : activeLogDate} の記録</p>
@@ -687,15 +817,24 @@ async function addMealRecord(name, calNum, category) {
   render();
   triggerScreenGlow('meal');
 
+  const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
+  const apiKey = state.settings.geminiApiKey;
+
   // 目標カロリーを超えたら怒る (AIまたは定型)
   if (target > 0 && afterTotal > target) {
     showMascot('angry', 'カロリーオーバー確認中…', false);
     const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。ちょっと怒りながらも愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
-    showMascot('angry', aiText || pickLine('mealOverAngry'));
+    showMascot('angry', aiText || pickLine('mealOverAngry'), true, true);
+  } else if (apiKey) {
+    // APIキーがあれば栄養バランスの観点でコメント
+    showMascot(category === '間食' ? 'angry' : 'smile', '栄養バランス確認中…', false);
+    const expr = category === '間食' ? 'angry' : 'smile';
+    const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、次の食事へのアドバイスを含めて1〜2文で話しかけてください。間食であれば少したしなめる調子で、それ以外は褒めつつ助言してください。前置きは不要です。`);
+    showMascot(expr, aiText || pickLine(category === '間食' ? 'mealSnackAdd' : 'mealNormalAdd'), true, true);
   } else if (category === '間食') {
-    showMascot('angry', pickLine('mealSnackAdd'));
+    showMascot('angry', pickLine('mealSnackAdd'), true, true);
   } else {
-    showMascot('smile', pickLine('mealNormalAdd'));
+    showMascot('smile', pickLine('mealNormalAdd'), true, true);
   }
 }
 
@@ -847,15 +986,6 @@ function renderSettings() {
     <p class="section-title">種目設定</p>
         <div class="field"><label>新しい種目を追加</label><input type="text" id="new-exercise-name" placeholder="例: ベンチプレス、プランク"></div>
     <div class="field">
-      <label>運動強度 (消費カロリー計算に使用)</label>
-      <select id="new-exercise-met">
-        <option value="3.0">軽め</option>
-        <option value="5.0" selected>普通</option>
-        <option value="7.0">きつい</option>
-        <option value="9.0">非常にきつい</option>
-      </select>
-    </div>
-    <div class="field">
       <label>記録項目 (複数選択可)</label>
       <div style="display:flex; gap:16px; align-items:center; padding:6px 0;">
         <label style="display:flex; align-items:center; gap:6px; font-size:14px; cursor:pointer;"><input type="checkbox" id="track-weight-chk" checked> 重量</label>
@@ -888,6 +1018,11 @@ function renderSettings() {
           <button type="button" class="secondary honorific-btn" data-honorific="くん" style="${state.settings.honorific === 'くん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">くん</button>
           <button type="button" class="secondary honorific-btn" data-honorific="none" style="${state.settings.honorific === 'none' ? 'border-color:var(--gold); color:var(--gold);' : ''}">呼び捨て</button>
         </div>
+      </div>
+
+      <div class="field">
+        <label>表示位置(キャラを長押しでドラッグして好きな位置に動かせます)</label>
+        <button type="button" class="secondary" id="reset-mascot-position-btn">位置を右上に戻す</button>
       </div>
 
       <div class="field">
@@ -1047,7 +1182,14 @@ function attachEvents() {
   if (exerciseSelect) {
     exerciseSelect.addEventListener('change', () => {
       selectedExerciseId = exerciseSelect.value;
+      selectedMetValue = null;
       render();
+    });
+  }
+  const metSelect = document.getElementById('input-met');
+  if (metSelect) {
+    metSelect.addEventListener('change', () => {
+      selectedMetValue = Number(metSelect.value);
     });
   }
     const timerToggleBtn = document.getElementById('timer-toggle-btn');
@@ -1066,6 +1208,7 @@ function attachEvents() {
     addSetBtn.addEventListener('click', async () => {
       const ex = state.exercises.find(e => e.id === selectedExerciseId);
       const log = { id: uid(), exerciseId: ex.id, date: activeLogDate };
+      log.met = Number(document.getElementById('input-met').value) || 5.0;
       if (ex.trackWeight) log.weight = Number(document.getElementById('input-weight').value) || 0;
       if (ex.trackReps) log.reps = Number(document.getElementById('input-reps').value) || 0;
       if (ex.trackTime) log.time = (Number(document.getElementById('input-time').value) || 0) * Number(document.getElementById('input-time-unit').value);
@@ -1077,12 +1220,21 @@ function attachEvents() {
       triggerScreenGlow('workout');
 
       const isPR = ex.trackWeight && prevBest !== null && log.weight > prevBest;
+      const apiKey = state.settings.geminiApiKey;
       if (isPR) {
         showMascot('smile', '自己ベスト更新中…!', false);
         const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`);
-        showMascot('smile', aiText || pickLine('workoutPR'));
+        showMascot('smile', aiText || pickLine('workoutPR'), true, true);
+      } else if (apiKey) {
+        showMascot('smile', '筋肉バランス確認中…', false);
+        const exNamesToday = [...new Set(currentLogWorkouts().map(l => {
+          const e2 = state.exercises.find(e => e.id === l.exerciseId);
+          return e2 ? e2.name : null;
+        }).filter(Boolean))].join('、');
+        const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${ex.name}」を記録しました。本日ここまでの筋トレ種目: ${exNamesToday}。使った筋肉のケア(ストレッチ・マッサージ)や、部位バランスの観点から次に取り組むと良いトレーニングを、褒めつつ1〜2文でアドバイスしてください。前置きは不要です。`);
+        showMascot('smile', aiText || pickLine('workoutAdd'), true, true);
       } else {
-        showMascot('smile', pickLine('workoutAdd'));
+        showMascot('smile', pickLine('workoutAdd'), true, true);
       }
     });
   }
@@ -1249,14 +1401,12 @@ function attachEvents() {
         return;
       }
 
-            const met = Number(document.getElementById('new-exercise-met').value) || 5.0;
       state.exercises.push({
         id: uid(),
         name,
         trackWeight,
         trackReps,
-        trackTime,
-        met
+        trackTime
       });
       saveState();
       exerciseListOpen = true;
@@ -1294,6 +1444,15 @@ function attachEvents() {
       state.settings.activeMascotSetId = mascotSetSelect.value;
       saveState();
       render();
+    });
+  }
+  const resetMascotPositionBtn = document.getElementById('reset-mascot-position-btn');
+  if (resetMascotPositionBtn) {
+    resetMascotPositionBtn.addEventListener('click', () => {
+      state.settings.mascotPosition = null;
+      saveState();
+      renderMascot();
+      alert('右上に戻しました');
     });
   }
   const addMascotSetBtn = document.getElementById('add-mascot-set-btn');
