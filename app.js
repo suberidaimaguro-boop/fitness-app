@@ -841,7 +841,7 @@ async function addMealRecord(name, calNum, category) {
     showMascot('angry', 'カロリーオーバー確認中…', false);
     const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。ちょっと怒りながらも愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
     showMascot('angry', aiText || pickLine('mealOverAngry'), true, true);
- } else if (apiKey) {
+  } else if (apiKey) {
     // APIキーがあれば栄養バランスの観点でコメント
     showMascot(category === '間食' ? 'angry' : 'smile', '栄養バランス確認中…', false);
     const expr = category === '間食' ? 'angry' : 'smile';
@@ -1279,7 +1279,7 @@ function attachEvents() {
     });
   }
   if (activeTimer) startTimerTickDisplay();
-  const addSetBtn = document.getElementById('add-set-btn');
+const addSetBtn = document.getElementById('add-set-btn');
   if (addSetBtn) {
     addSetBtn.addEventListener('click', async () => {
       const ex = state.exercises.find(e => e.id === selectedExerciseId);
@@ -1301,7 +1301,7 @@ function attachEvents() {
         showMascot('smile', '自己ベスト更新中…!', false);
         const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`);
         showMascot('smile', aiText || pickLine('workoutPR'), true, true);
-     } else if (apiKey) {
+      } else if (apiKey) {
         showMascot('smile', '筋肉バランス確認中…', false);
         const exNamesToday = [...new Set(currentLogWorkouts().map(l => {
           const e2 = state.exercises.find(e => e.id === l.exerciseId);
@@ -1313,7 +1313,6 @@ function attachEvents() {
           aiText = `【筋トレ：${ex.name} に対して】\n` + aiText;
         }
         showMascot('smile', aiText || pickLine('workoutAdd'), true, true);
-      } else {
       } else {
         showMascot('smile', pickLine('workoutAdd'), true, true);
       }
