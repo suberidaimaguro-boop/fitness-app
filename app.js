@@ -24,7 +24,7 @@ function defaultState() {
     goals: { dailySetTarget: 4, dailyCalorieTarget: 2000 },
     settings: {
       geminiApiKey: '',
-      groqApiKey: '', // Groq APIキー
+      groqApiKey: '',
       userName: '',
       honorific: 'さん',
       bodyHeightCm: null,
@@ -523,8 +523,38 @@ function renderMascot() {
   if (btn) attachMascotDrag(btn, wrap);
 }
 
-/* ===== AI通信: テキストはGroq (Llama 3)、画像認識はGemini ===== */
-fetchGroqComment(prompt)
+/* ===== AI通信: テキストはGroq、画像認識はGemini ===== */
+async function fetchGroqComment(prompt) {
+  const apiKey = state.settings.groqApiKey;
+  if (!apiKey) {
+    alert('設定画面でGroq APIキーを保存してください');
+    return null;
+  }
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(`【Groqエラー】\nコード: ${res.status}\n内容: ${err.error?.message || '不明なエラー'}`);
+      return null;
+    }
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content?.trim() || null;
+  } catch (e) {
+    alert(`【通信エラー】\n${e.message}`);
+    return null;
+  }
+}
 
 async function fetchGeminiFoodRecognition(file) {
   const apiKey = state.settings.geminiApiKey;
@@ -1291,7 +1321,6 @@ function attachEvents() {
     });
   }
 
-  // Groq と Gemini の両方のキーを保存
   const saveApiKeysBtn = document.getElementById('save-api-keys-btn');
   if (saveApiKeysBtn) {
     saveApiKeysBtn.addEventListener('click', () => {
@@ -1345,7 +1374,6 @@ function attachEvents() {
   if (helpBtn && helpModal) { helpBtn.addEventListener('click', () => helpModal.style.display = 'flex'); }
   if (closeHelpBtn && helpModal) { closeHelpBtn.addEventListener('click', () => helpModal.style.display = 'none'); }
 
-  // 文字からの推測も爆速のGroqで行う
   const aiGuessBtn = document.getElementById('ai-guess-meal-btn');
   if (aiGuessBtn) {
     aiGuessBtn.addEventListener('click', async () => {
