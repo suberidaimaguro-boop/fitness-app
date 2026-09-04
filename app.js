@@ -526,7 +526,10 @@ function renderMascot() {
 /* ===== AI通信: テキストはGroq (Llama 3)、画像認識はGemini ===== */
 async function fetchGroqComment(prompt) {
   const apiKey = state.settings.groqApiKey;
-  if (!apiKey) return null;
+  if (!apiKey) {
+    alert('設定画面でGroq APIキーを保存してください');
+    return null;
+  }
   try {
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -542,13 +545,13 @@ async function fetchGroqComment(prompt) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      console.warn('Groq通信エラー:', res.status, err);
+      alert(`【Groqエラー】\nコード: ${res.status}\n内容: ${err.error?.message || '不明なエラー'}`);
       return null;
     }
     const data = await res.json();
     return data?.choices?.[0]?.message?.content?.trim() || null;
   } catch (e) {
-    console.warn('Groq例外エラー:', e);
+    alert(`【通信エラー】\n${e.message}`);
     return null;
   }
 }
