@@ -1,4 +1,4 @@
-const CACHE_NAME = 'fitness-app-v25';
+const CACHE_NAME = 'fitness-app-v26';
 const ASSETS = [
   'index.html',
   'style.css',
