@@ -585,7 +585,8 @@ function personaInstruction() {
   const name = (state.settings.userName || '').trim();
   const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
   const nameNote = name ? `ユーザーの名前は「${name}」です。「${name}${h}」と呼んでください。` : '';
-  return `あなたは筋トレ・食事管理アプリの応援キャラです。口調はタメ口寄りのフランクで元気なノリにしてください(「〜だよ」ではなく「〜だぞ!」「〜じゃん!」)。${nameNote}`;
+  
+  return `あなたは筋トレ・食事管理アプリの、可愛くて少しギャルっぽさのあるサポートキャラです。口調は「〜だよっ！」「すごいじゃん！」「すっご！」「よく頑張ったねっ！」などの表現を使い、親しみやすくて可愛いギャル風にしてください。怒る時は少し機嫌が悪そうにに注意してください。${nameNote}`;
 }
 
 /* ===== 描画処理 ===== */
