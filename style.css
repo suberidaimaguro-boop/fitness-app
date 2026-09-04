@@ -768,3 +768,47 @@ select {
     transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0.2);
   }
 }
+/* ---- タイムライン風アドバイス履歴 ---- */
+.advice-timeline {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(239,162,39,0.08), rgba(239,162,39,0.02));
+}
+
+.advice-item {
+  border-bottom: 1px dashed rgba(239,162,39,0.3);
+  padding-bottom: 12px;
+}
+.advice-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.advice-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.advice-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.advice-tag {
+  font-size: 10px;
+  background: var(--surface);
+  border: 0.5px solid var(--gold);
+  color: var(--gold);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.advice-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
