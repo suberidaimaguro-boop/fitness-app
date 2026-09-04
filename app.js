@@ -24,6 +24,7 @@ function defaultState() {
     goals: { dailySetTarget: 4, dailyCalorieTarget: 2000 },
     settings: {
       geminiApiKey: '',
+      groqApiKey: '', // Groq APIキー
       userName: '',
       honorific: 'さん',
       bodyHeightCm: null,
@@ -37,7 +38,7 @@ function defaultState() {
     },
     favoriteMeals: [],
     haveToList: { date: todayKey(), items: [] },
-    dailyAdvices: [] // アドバイス履歴
+    dailyAdvices: []
   };
 }
 
@@ -56,10 +57,11 @@ function loadState() {
       if (!parsed.settings.themeBg) parsed.settings.themeBg = '#121212';
       if (parsed.settings.bodyHeightCm === undefined) parsed.settings.bodyHeightCm = null;
       if (parsed.settings.mascotPosition === undefined) parsed.settings.mascotPosition = null;
+      if (parsed.settings.groqApiKey === undefined) parsed.settings.groqApiKey = '';
       if (!parsed.haveToList || parsed.haveToList.date !== todayKey()) {
         parsed.haveToList = { date: todayKey(), items: [] };
       }
-      if (!parsed.dailyAdvices) parsed.dailyAdvices = []; // 互換性維持
+      if (!parsed.dailyAdvices) parsed.dailyAdvices = [];
       return parsed;
     }
   } catch (e) {
@@ -521,18 +523,59 @@ function renderMascot() {
   if (btn) attachMascotDrag(btn, wrap);
 }
 
-async function fetchGeminiComment(prompt) {
-  const apiKey = state.settings.geminiApiKey;
+/* ===== AI通信: テキストはGroq (Llama 3)、画像認識はGemini ===== */
+async function fetchGroqComment(prompt) {
+  const apiKey = state.settings.groqApiKey;
   if (!apiKey) return null;
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.7
+      })
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.warn('Groq通信エラー:', res.status, err);
+      return null;
+    }
     const data = await res.json();
-    return data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || null;
-  } catch (e) { return null; }
+    return data?.choices?.[0]?.message?.content?.trim() || null;
+  } catch (e) {
+    console.warn('Groq例外エラー:', e);
+    return null;
+  }
+}
+
+async function fetchGeminiFoodRecognition(file) {
+  const apiKey = state.settings.geminiApiKey;
+  if (!apiKey) return { error: 'no_key' };
+  try {
+    const base64Data = await fileToBase64Raw(file);
+    const prompt = '料理の名前と推定カロリー(kcal、整数)を判定し、{"name": "料理名", "calories": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ inline_data: { mime_type: file.type || 'image/jpeg', data: base64Data } }, { text: prompt }] }]
+      })
+    });
+    if (!res.ok) return { error: 'failed' };
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return { error: 'no_text' };
+    const cleaned = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    return { name: parsed.name, calories: Math.round(parsed.calories) };
+  } catch (e) {
+    return { error: 'exception' };
+  }
 }
 
 function personaInstruction() {
@@ -772,25 +815,6 @@ function fileToBase64Raw(file) {
   });
 }
 
-async function fetchGeminiFoodRecognition(file) {
-  const apiKey = state.settings.geminiApiKey; if (!apiKey) return { error: 'no_key' };
-  try {
-    const base64Data = await fileToBase64Raw(file);
-    const prompt = '料理の名前と推定カロリー(kcal、整数)を判定し、{"name": "料理名", "calories": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: file.type || 'image/jpeg', data: base64Data } }, { text: prompt }] }] })
-    });
-    if (!res.ok) return { error: 'failed' };
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return { error: 'no_text' };
-    const cleaned = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
-    return { name: parsed.name, calories: Math.round(parsed.calories) };
-  } catch (e) { return { error: 'exception' }; }
-}
-
 async function addMealRecord(name, calNum, category) {
   const target = state.goals.dailyCalorieTarget;
   const beforeTotal = currentCalorieTotal();
@@ -800,17 +824,17 @@ async function addMealRecord(name, calNum, category) {
   saveState(); render(); triggerScreenGlow('meal');
 
   const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
-  const apiKey = state.settings.geminiApiKey;
+  const apiKey = state.settings.groqApiKey;
 
   if (target > 0 && afterTotal > target) {
     showMascot('angry', 'カロリーオーバー確認中…', false);
-    const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
+    const aiText = await fetchGroqComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
     showMascot('angry', aiText || pickLine('mealOverAngry'), true, `警告`);
   } else if (apiKey) {
     showMascot(category === '間食' ? 'angry' : 'smile', '栄養バランス確認中…', false);
     const expr = category === '間食' ? 'angry' : 'smile';
     const prompt = `ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
-    let aiText = await fetchGeminiComment(prompt);
+    let aiText = await fetchGroqComment(prompt);
     if (aiText) aiText = `【${category}：${name} に対して】\n` + aiText;
     showMascot(expr, aiText || pickLine(category === '間食' ? 'mealSnackAdd' : 'mealNormalAdd'), true, `食事記録`);
   } else if (category === '間食') {
@@ -859,7 +883,7 @@ function renderMeal() {
       <input type="number" id="meal-calories" inputmode="numeric" placeholder="350">
     </div>
     
-    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー推測</button>
+    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー推測 (Groq)</button>
     <button class="primary" id="add-meal-btn">記録を追加</button>
     <button class="secondary" id="save-favorite-btn" style="margin-bottom:12px;">☆ 今の内容を「よく食べるもの」に登録</button>
 
@@ -870,7 +894,7 @@ function renderMeal() {
     ${favListOpen ? `<div class="chip-row" style="margin-bottom:16px;">${favoriteChips || '<span class="sub" style="padding:6px;">登録がありません</span>'}</div>` : ''}
 
     <div class="field" style="margin-top:8px;">
-      <label>写真から自動入力 (任意・Gemini APIキーが必要)</label>
+      <label>写真から自動入力 (Gemini APIキーを使用)</label>
       <input type="file" accept="image/*" id="meal-photo-input">
       <div id="meal-photo-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;"></div>
     </div>
@@ -973,8 +997,15 @@ function renderSettings() {
     ` : ''}
 
     <p class="section-title">AI機能設定 (任意)</p>
-    <div class="field"><label>Gemini APIキー (画像解析・応援コメントに使用)</label><input type="text" id="gemini-api-key" value="${escapeHtml(state.settings.geminiApiKey || '')}" placeholder="AIキーを入力"></div>
-    <button class="primary" id="save-api-key-btn" style="margin-bottom:20px;">APIキーを保存</button>
+    <div class="field">
+      <label>Groq APIキー (アドバイス・テキスト生成・高速推測)</label>
+      <input type="text" id="groq-api-key" value="${escapeHtml(state.settings.groqApiKey || '')}" placeholder="gsk_...">
+    </div>
+    <div class="field">
+      <label>Gemini APIキー (食事の写真解析用)</label>
+      <input type="text" id="gemini-api-key" value="${escapeHtml(state.settings.geminiApiKey || '')}" placeholder="AIキーを入力">
+    </div>
+    <button class="primary" id="save-api-keys-btn" style="margin-bottom:20px;">APIキーを保存</button>
 
     <p class="section-title">アプリの配色設定</p>
     <button type="button" class="accordion-toggle" id="accent-toggle-btn"><span><i class="ti ti-palette"></i> アクセント色設定 (ボタン・数値)</span><i class="ti ${themeAccentOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i></button>
@@ -1026,10 +1057,10 @@ function render() {
         <h3 style="margin-top:0;">📖 アプリの使い方</h3>
         <ul style="text-align:left; font-size:13px; color:var(--text-primary); padding-left:20px; line-height:1.6;">
           <li><strong>ホーム:</strong> 日々の達成率や連続記録を確認できます。</li>
-          <li><strong>筋トレ:</strong> 種目を選んで記録します。タイマー計測も可能です。</li>
-          <li><strong>食事:</strong> 文字や写真からAIがカロリーを推測してくれます。</li>
+          <li><strong>筋トレ:</strong> 種目を選んで記録します。タイマー計測や種目の追加も可能です。</li>
+          <li><strong>食事:</strong> 文字からAI推測(Groq)や写真解析(Gemini)が可能です。</li>
           <li><strong>履歴:</strong> 過去の記録や、日々の「総合カロリー」を確認できます。</li>
-          <li><strong>設定:</strong> 目標、AIキー、キャラ、配色などを変更できます。</li>
+          <li><strong>設定:</strong> 目標、Groq/Geminiキー、キャラ、配色などを変更できます。</li>
         </ul>
         <button class="primary" id="close-help-btn" style="margin-top:16px;">閉じる</button>
       </div>
@@ -1109,16 +1140,16 @@ function attachEvents() {
       state.workoutLogs.push(log); saveState(); render(); triggerScreenGlow('workout');
       
       const isPR = ex.trackWeight && prevBest !== null && log.weight > prevBest;
-      const apiKey = state.settings.geminiApiKey;
+      const apiKey = state.settings.groqApiKey;
       if (isPR) {
         showMascot('smile', '自己ベスト更新中…!', false);
-        const aiText = await fetchGeminiComment(`${personaInstruction()}ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`);
+        const aiText = await fetchGroqComment(`${personaInstruction()}ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`);
         showMascot('smile', aiText || pickLine('workoutPR'), true, `自己ベスト`);
       } else if (apiKey) {
         showMascot('smile', '筋肉バランス確認中…', false);
         const exNamesToday = [...new Set(currentLogWorkouts().map(l => { const e2 = state.exercises.find(e => e.id === l.exerciseId); return e2 ? e2.name : null; }).filter(Boolean))].join('、');
         const prompt = `ユーザーが「${ex.name}」を記録しました。本日ここまでの筋トレ種目: ${exNamesToday}。部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
-        let aiText = await fetchGeminiComment(prompt);
+        let aiText = await fetchGroqComment(prompt);
         if (aiText) aiText = `【筋トレ：${ex.name} に対して】\n` + aiText;
         showMascot('smile', aiText || pickLine('workoutAdd'), true, `筋トレ記録`);
       } else { showMascot('smile', pickLine('workoutAdd'), true, `筋トレ記録`); }
@@ -1156,11 +1187,11 @@ function attachEvents() {
   const reqWorkoutBtn = document.getElementById('req-workout-advice-btn');
   if (reqWorkoutBtn) {
     reqWorkoutBtn.addEventListener('click', async () => {
-      if (!state.settings.geminiApiKey) { alert('設定からAPIキーを登録してください'); return; }
+      if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       reqWorkoutBtn.textContent = '✨ AIトレーナーがメニューを考案中…'; reqWorkoutBtn.disabled = true;
       const exNamesToday = [...new Set(currentLogWorkouts().map(l => { const e2 = state.exercises.find(e => e.id === l.exerciseId); return e2 ? e2.name : null; }).filter(Boolean))].join('、');
       const prompt = exNamesToday ? `ユーザーの今日の筋トレ種目: ${exNamesToday}。部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜2文で提案してください。褒め言葉や相槌は不要です。` : `ユーザーは今日まだ筋トレをしていません。モチベーションを上げるような、今日のおすすめ部位やトレーニングを1〜2文で提案してください。褒め言葉や相槌は不要です。`;
-      const aiText = await fetchGeminiComment(personaInstruction() + prompt);
+      const aiText = await fetchGroqComment(personaInstruction() + prompt);
       reqWorkoutBtn.textContent = '✨ 現状からAIに筋トレのアドバイスをもらう'; reqWorkoutBtn.disabled = false;
       if (aiText) showMascot('smile', aiText, true, '筋トレ相談');
     });
@@ -1169,11 +1200,11 @@ function attachEvents() {
   const reqMealBtn = document.getElementById('req-meal-advice-btn');
   if (reqMealBtn) {
     reqMealBtn.addEventListener('click', async () => {
-      if (!state.settings.geminiApiKey) { alert('設定からAPIキーを登録してください'); return; }
+      if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       reqMealBtn.textContent = '✨ AIトレーナーが食事を分析中…'; reqMealBtn.disabled = true;
       const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
       const prompt = todaysMealList ? `今日の食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜2文で提案してください。褒め言葉や相槌は不要です。` : `ユーザーは今日まだ食事を記録していません。健康的な1日のスタートにおすすめの食材やメニューを1〜2文で提案してください。褒め言葉や相槌は不要です。`;
-      const aiText = await fetchGeminiComment(personaInstruction() + prompt);
+      const aiText = await fetchGroqComment(personaInstruction() + prompt);
       reqMealBtn.textContent = '✨ 現状からAIに食事のアドバイスをもらう'; reqMealBtn.disabled = false;
       if (aiText) showMascot('smile', aiText, true, '食事相談');
     });
@@ -1287,10 +1318,14 @@ function attachEvents() {
     });
   }
 
-  const saveApiKeyBtn = document.getElementById('save-api-key-btn');
-  if (saveApiKeyBtn) {
-    saveApiKeyBtn.addEventListener('click', () => {
-      state.settings.geminiApiKey = document.getElementById('gemini-api-key').value.trim(); saveState(); alert('APIキーを保存しました');
+  // Groq と Gemini の両方のキーを保存
+  const saveApiKeysBtn = document.getElementById('save-api-keys-btn');
+  if (saveApiKeysBtn) {
+    saveApiKeysBtn.addEventListener('click', () => {
+      state.settings.groqApiKey = document.getElementById('groq-api-key').value.trim();
+      state.settings.geminiApiKey = document.getElementById('gemini-api-key').value.trim();
+      saveState();
+      alert('APIキーを保存しました');
     });
   }
 
@@ -1337,15 +1372,16 @@ function attachEvents() {
   if (helpBtn && helpModal) { helpBtn.addEventListener('click', () => helpModal.style.display = 'flex'); }
   if (closeHelpBtn && helpModal) { closeHelpBtn.addEventListener('click', () => helpModal.style.display = 'none'); }
 
+  // 文字からの推測も爆速のGroqで行う
   const aiGuessBtn = document.getElementById('ai-guess-meal-btn');
   if (aiGuessBtn) {
     aiGuessBtn.addEventListener('click', async () => {
       const nameInput = document.getElementById('meal-name'); const name = nameInput.value.trim();
       if (!name) { alert('先に食べたものを入力してください'); return; }
-      if (!state.settings.geminiApiKey) { alert('設定からAPIキーを登録してください'); return; }
+      if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       const prevText = aiGuessBtn.textContent; aiGuessBtn.textContent = '推測中...'; aiGuessBtn.disabled = true;
-      const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)を推測し、{"calories": 数値} のJSON形式のみ返してください。前置きや解説は不要です。`;
-      const resText = await fetchGeminiComment(prompt);
+      const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)を推測し、{"calories": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。`;
+      const resText = await fetchGroqComment(prompt);
       aiGuessBtn.textContent = prevText; aiGuessBtn.disabled = false;
       try {
         const cleaned = resText.replace(/```json|```/g, '').trim(); const parsed = JSON.parse(cleaned);
