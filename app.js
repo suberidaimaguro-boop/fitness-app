@@ -524,7 +524,7 @@ function renderMascot() {
 }
 
 /* ===== AI通信: テキストはGroq、画像認識はGemini ===== */
-async function fetchGroqComment(prompt) {
+async function fetchGroqComment(prompt, { mascot = false, temperature = 0.35 } = {}) {
   const apiKey = state.settings.groqApiKey;
   if (!apiKey) {
     alert('設定画面でGroq APIキーを保存してください');
@@ -539,8 +539,10 @@ async function fetchGroqComment(prompt) {
       },
       body: JSON.stringify({
         model: 'groq/compound-mini',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7
+        messages: mascot
+          ? [{ role: 'system', content: personaInstruction() }, { role: 'user', content: prompt }]
+          : [{ role: 'user', content: prompt }],
+        temperature
       })
     });
     if (!res.ok) {
@@ -586,7 +588,7 @@ function personaInstruction() {
   const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
   const nameNote = name ? `ユーザーの名前は「${name}」です。「${name}${h}」と呼んでください。` : '';
   
-  return `あなたは筋トレ・食事管理アプリの、可愛くて少しギャルっぽさのあるサポートキャラです。口調は「〜だよっ！」「すごいじゃん！」「すっご！」「よく頑張ったねっ！」などの表現を使い、親しみやすくて可愛いギャル風にしてください。怒る時は少し機嫌が悪そうにに注意してください。${nameNote}`;
+  return `あなたは筋トレ・食事管理アプリの専属サポートキャラクターです。返答は必ず自然な日本語で、可愛く少しギャルっぽい親しみのある口調に統一してください。一人称は「アタシ」。文末は「〜だよっ！」「〜じゃん！」「〜しよっ！」などを中心にし、敬語・事務的な説明・過度に専門的な言い回しは使わないでください。返答は1〜2文、120文字以内にしてください。運動や食事の助言は具体的で安全な内容にしてください。怒る場面でも責めずに、少しむくれた可愛い口調で注意してください。${nameNote}`;
 }
 
 /* ===== 描画処理 ===== */
@@ -832,13 +834,13 @@ async function addMealRecord(name, calNum, category) {
 
   if (target > 0 && afterTotal > target) {
     showMascot('angry', 'カロリーオーバー確認中…', false);
-    const aiText = await fetchGroqComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
+    const aiText = await fetchGroqComment(`ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`, { mascot: true });
     showMascot('angry', aiText || pickLine('mealOverAngry'), true, `警告`);
   } else if (apiKey) {
     showMascot(category === '間食' ? 'angry' : 'smile', '栄養バランス確認中…', false);
     const expr = category === '間食' ? 'angry' : 'smile';
     const prompt = `ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
-    let aiText = await fetchGroqComment(prompt);
+    let aiText = await fetchGroqComment(prompt, { mascot: true });
     if (aiText) aiText = `【${category}：${name} に対して】\n` + aiText;
     showMascot(expr, aiText || pickLine(category === '間食' ? 'mealSnackAdd' : 'mealNormalAdd'), true, `食事記録`);
   } else if (category === '間食') {
@@ -1147,13 +1149,13 @@ function attachEvents() {
       const apiKey = state.settings.groqApiKey;
       if (isPR) {
         showMascot('smile', '自己ベスト更新中…!', false);
-        const aiText = await fetchGroqComment(`${personaInstruction()}ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`);
+        const aiText = await fetchGroqComment(`ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`, { mascot: true });
         showMascot('smile', aiText || pickLine('workoutPR'), true, `自己ベスト`);
       } else if (apiKey) {
         showMascot('smile', '筋肉バランス確認中…', false);
         const exNamesToday = [...new Set(currentLogWorkouts().map(l => { const e2 = state.exercises.find(e => e.id === l.exerciseId); return e2 ? e2.name : null; }).filter(Boolean))].join('、');
         const prompt = `ユーザーが「${ex.name}」を記録しました。本日ここまでの筋トレ種目: ${exNamesToday}。部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
-        let aiText = await fetchGroqComment(prompt);
+        let aiText = await fetchGroqComment(prompt, { mascot: true });
         if (aiText) aiText = `【筋トレ：${ex.name} に対して】\n` + aiText;
         showMascot('smile', aiText || pickLine('workoutAdd'), true, `筋トレ記録`);
       } else { showMascot('smile', pickLine('workoutAdd'), true, `筋トレ記録`); }
@@ -1195,7 +1197,7 @@ function attachEvents() {
       reqWorkoutBtn.textContent = '✨ AIトレーナーがメニューを考案中…'; reqWorkoutBtn.disabled = true;
       const exNamesToday = [...new Set(currentLogWorkouts().map(l => { const e2 = state.exercises.find(e => e.id === l.exerciseId); return e2 ? e2.name : null; }).filter(Boolean))].join('、');
       const prompt = exNamesToday ? `ユーザーの今日の筋トレ種目: ${exNamesToday}。部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜2文で提案してください。褒め言葉や相槌は不要です。` : `ユーザーは今日まだ筋トレをしていません。モチベーションを上げるような、今日のおすすめ部位やトレーニングを1〜2文で提案してください。褒め言葉や相槌は不要です。`;
-      const aiText = await fetchGroqComment(personaInstruction() + prompt);
+      const aiText = await fetchGroqComment(prompt, { mascot: true });
       reqWorkoutBtn.textContent = '✨ 現状からAIに筋トレのアドバイスをもらう'; reqWorkoutBtn.disabled = false;
       if (aiText) showMascot('smile', aiText, true, '筋トレ相談');
     });
@@ -1208,7 +1210,7 @@ function attachEvents() {
       reqMealBtn.textContent = '✨ AIトレーナーが食事を分析中…'; reqMealBtn.disabled = true;
       const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
       const prompt = todaysMealList ? `今日の食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜2文で提案してください。褒め言葉や相槌は不要です。` : `ユーザーは今日まだ食事を記録していません。健康的な1日のスタートにおすすめの食材やメニューを1〜2文で提案してください。褒め言葉や相槌は不要です。`;
-      const aiText = await fetchGroqComment(personaInstruction() + prompt);
+      const aiText = await fetchGroqComment(prompt, { mascot: true });
       reqMealBtn.textContent = '✨ 現状からAIに食事のアドバイスをもらう'; reqMealBtn.disabled = false;
       if (aiText) showMascot('smile', aiText, true, '食事相談');
     });
