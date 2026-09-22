@@ -538,7 +538,7 @@ async function fetchGroqComment(prompt, { mascot = false, temperature = 0.35 } =
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'groq/compound-mini',
+     model: 'llama3-8b-8192',
         messages: mascot
           ? [{ role: 'system', content: personaInstruction() }, { role: 'user', content: prompt }]
           : [{ role: 'user', content: prompt }],
