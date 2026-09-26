@@ -545,7 +545,8 @@ async function fetchGroqComment(prompt, { mascot = false, temperature = 0.35 } =
         { role: 'user', content: prompt }
       ]
     : [{ role: 'user', content: prompt }],
-  temperature
+  temperature,
+  max_completion_tokens: 160,
 })
     });
     if (!res.ok) {
