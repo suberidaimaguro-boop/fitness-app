@@ -538,12 +538,15 @@ async function fetchGroqComment(prompt, { mascot = false, temperature = 0.35 } =
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-     model: 'llama3-8b-8192',
-        messages: mascot
-          ? [{ role: 'system', content: personaInstruction() }, { role: 'user', content: prompt }]
-          : [{ role: 'user', content: prompt }],
-        temperature
-      })
+  model: 'qwen/qwen3.8-27b',
+  messages: mascot
+    ? [
+        { role: 'system', content: personaInstruction() },
+        { role: 'user', content: prompt }
+      ]
+    : [{ role: 'user', content: prompt }],
+  temperature
+})
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
