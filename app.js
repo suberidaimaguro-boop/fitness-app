@@ -552,11 +552,13 @@ async function fetchGroqComment(prompt, { mascot = false, temperature = 0.35 } =
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'groq/compound-mini',
+        model: 'openai/gpt-oss-20b',
         messages: mascot
           ? [{ role: 'system', content: personaInstruction() }, { role: 'user', content: prompt }]
           : [{ role: 'user', content: prompt }],
-        temperature
+        temperature,
+        max_completion_tokens: 160,
+        include_reasoning: false
       })
     });
     if (!res.ok) {
@@ -578,14 +580,17 @@ async function fetchGeminiFoodRecognition(file) {
   try {
     const base64Data = await fileToBase64Raw(file);
     const prompt = '料理の名前と推定カロリー(kcal、整数)を判定し、{"name": "料理名", "calories": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ inline_data: { mime_type: file.type || 'image/jpeg', data: base64Data } }, { text: prompt }] }]
       })
     });
-    if (!res.ok) return { error: 'failed' };
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      return { error: 'failed', detail: error.error?.message || `エラーコード ${res.status}` };
+    }
     const data = await res.json();
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) return { error: 'no_text' };
@@ -1271,7 +1276,7 @@ function attachEvents() {
       if (!state.settings.geminiApiKey) { if (statusEl) statusEl.textContent = '設定画面でGemini APIキーを登録してください'; return; }
       if (statusEl) statusEl.textContent = 'AIが写真から料理とカロリーを解析中…';
       const result = await fetchGeminiFoodRecognition(file);
-      if (result.error) { if (statusEl) statusEl.textContent = '判定に失敗しました。手動で入力してください。'; return; }
+      if (result.error) { if (statusEl) statusEl.textContent = `判定に失敗しました（${result.detail || '通信エラー'}）。手動で入力してください。`; return; }
       document.getElementById('meal-name').value = result.name; document.getElementById('meal-calories').value = result.calories;
       if (statusEl) statusEl.textContent = `判定結果を入力しました: ${result.name} (約${result.calories}kcal)`;
     });
