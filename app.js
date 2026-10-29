@@ -29,6 +29,8 @@ function defaultState() {
       honorific: 'さん',
       bodyHeightCm: null,
       bodyWeightKg: null,
+      basalMetabolicSex: '',
+      ageYears: null,
       mascotEnabled: true,
       activeMascotSetId: 'set_default',
       mascotSets: [{ id: 'set_default', name: 'デフォルト', images: {} }],
@@ -56,6 +58,9 @@ function loadState() {
       if (!parsed.settings.themeAccent) parsed.settings.themeAccent = '#d4a373';
       if (!parsed.settings.themeBg) parsed.settings.themeBg = '#121212';
       if (parsed.settings.bodyHeightCm === undefined) parsed.settings.bodyHeightCm = null;
+      if (parsed.settings.bodyWeightKg === undefined) parsed.settings.bodyWeightKg = null;
+      if (parsed.settings.basalMetabolicSex === undefined) parsed.settings.basalMetabolicSex = '';
+      if (parsed.settings.ageYears === undefined) parsed.settings.ageYears = null;
       if (parsed.settings.mascotPosition === undefined) parsed.settings.mascotPosition = null;
       if (parsed.settings.groqApiKey === undefined) parsed.settings.groqApiKey = '';
       if (!parsed.haveToList || parsed.haveToList.date !== todayKey()) {
@@ -376,6 +381,15 @@ function calculateBMI(heightCm, weightKg) {
   return { val: bmi.toFixed(1), category, advice, standardWeight };
 }
 
+function calculateBasalMetabolicRate(heightCm, weightKg, ageYears, sex) {
+  if (!heightCm || !weightKg || !ageYears || heightCm <= 0 || weightKg <= 0 || ageYears <= 0) return null;
+  if (sex !== 'male' && sex !== 'female') return null;
+
+  // Mifflin-St Jeor式（成人の推定基礎代謝量）
+  const base = (10 * weightKg) + (6.25 * heightCm) - (5 * ageYears);
+  return Math.round(base + (sex === 'male' ? 5 : -161));
+}
+
 /* ===== マスコット管理 ===== */
 const MASCOT_EXPRESSIONS = ['neutral', 'smile', 'dismay', 'angry', 'sad'];
 const MASCOT_EXPRESSION_LABELS = { neutral: '通常', smile: '笑顔', dismay: '困り', angry: '怒り', sad: '悲しい' };
@@ -538,16 +552,12 @@ async function fetchGroqComment(prompt, { mascot = false, temperature = 0.35 } =
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-  model: 'qwen/qwen3.8-27b',
-  messages: mascot
-    ? [
-        { role: 'system', content: personaInstruction() },
-        { role: 'user', content: prompt }
-      ]
-    : [{ role: 'user', content: prompt }],
-  temperature,
-  max_completion_tokens: 160,
-})
+        model: 'groq/compound-mini',
+        messages: mascot
+          ? [{ role: 'system', content: personaInstruction() }, { role: 'user', content: prompt }]
+          : [{ role: 'user', content: prompt }],
+        temperature
+      })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -976,14 +986,26 @@ function renderHistory() {
 function renderSettings() {
   const activeSet = getActiveSet();
   const bmiData = calculateBMI(state.settings.bodyHeightCm, state.settings.bodyWeightKg);
+  const bmr = calculateBasalMetabolicRate(
+    state.settings.bodyHeightCm,
+    state.settings.bodyWeightKg,
+    state.settings.ageYears,
+    state.settings.basalMetabolicSex
+  );
 
   return `
     <p class="section-title">基本情報</p>
     <div class="field"><label>名前</label><input type="text" id="user-name" value="${escapeHtml(state.settings.userName || '')}" placeholder="たろう"></div>
+    <div class="row-2">
+      <div class="field"><label>計算用の性別</label><select id="basal-metabolic-sex"><option value="">選択してください</option><option value="male" ${state.settings.basalMetabolicSex === 'male' ? 'selected' : ''}>男性</option><option value="female" ${state.settings.basalMetabolicSex === 'female' ? 'selected' : ''}>女性</option></select></div>
+      <div class="field"><label>年齢</label><input type="number" id="age-years" inputmode="numeric" min="18" max="120" value="${state.settings.ageYears ?? ''}" placeholder="30"></div>
+    </div>
     <div class="field"><label>身長 (cm)</label><input type="number" id="body-height" inputmode="decimal" value="${state.settings.bodyHeightCm ?? ''}" placeholder="170"></div>
     <div class="field"><label>体重 (kg)</label><input type="number" id="body-weight" inputmode="decimal" value="${state.settings.bodyWeightKg ?? ''}" placeholder="65"></div>
     <div class="bmi-card"><span class="label" style="margin:0;"><i class="ti ti-calculator"></i> 現在のBMI</span><span class="value gold">${bmiData ? `${bmiData.val} <span class="unit">(${bmiData.category})</span>` : '<span class="sub">身長・体重を入力で計算</span>'}</span></div>
     ${bmiData ? `<div class="bmi-detail-box">💡 ${bmiData.advice}</div>` : ''}
+    <div class="bmi-card" style="margin-top:10px;"><span class="label" style="margin:0;"><i class="ti ti-flame"></i> 推定基礎代謝量</span><span class="value gold">${bmr ? `約${bmr.toLocaleString()} <span class="unit">kcal / 日</span>` : '<span class="sub">性別・年齢・身長・体重を入力で計算</span>'}</span></div>
+    ${bmr ? '<div class="bmi-detail-box">💡 何もしなくても生命維持のために消費する、1日あたりの推定カロリーです。運動や日常活動で使う分は含みません。</div>' : ''}
     <button class="primary" id="save-profile-btn" style="margin-bottom:20px;">基本情報を保存</button>
 
     <p class="section-title">目標設定</p>
@@ -1286,6 +1308,8 @@ function attachEvents() {
   if (saveProfileBtn) {
     saveProfileBtn.addEventListener('click', () => {
       state.settings.userName = document.getElementById('user-name').value.trim();
+      state.settings.basalMetabolicSex = document.getElementById('basal-metabolic-sex').value;
+      const ageVal = document.getElementById('age-years').value; state.settings.ageYears = ageVal === '' ? null : Number(ageVal);
       const hVal = document.getElementById('body-height').value; state.settings.bodyHeightCm = hVal === '' ? null : Number(hVal);
       const wVal = document.getElementById('body-weight').value; state.settings.bodyWeightKg = wVal === '' ? null : Number(wVal);
       saveState(); render(); alert('基本情報を保存しました');
