@@ -426,12 +426,12 @@ function resizeImageFile(file, maxSize = 320, quality = 0.85) {
 }
 
 const MASCOT_LINES = {
-  open: ['今日もがんばろ!', 'おかえり!調子はどう?', 'よし、記録つけていこ!'],
-  workoutAdd: ['頑張っててえらいぞ!', 'ナイスセット!その調子!'],
-  mealSnackAdd: ['もう、食べすぎたらダメだぞ!', '間食はほどほどにね…'],
-  mealNormalAdd: ['ちゃんと記録できてえらい!', 'いいね、その調子!'],
-  workoutPR: ['自己ベスト更新、すごいじゃん!'],
-  mealOverAngry: ['ちょっと!カロリー上限オーバーしてるじゃん!もう今日はこれ以上食べちゃダメだぞ!']
+  open: ['おかえり。今日も無理のないペースで、一緒に進めようね。', '来てくれてうれしいな。今日の調子を少しずつ整えていこうか。', '今日もおつかれさま。できることから始めようね。'],
+  workoutAdd: ['記録できてえらいよ。この積み重ねが、ちゃんと力になるからね。', 'ナイスセット。今の調子で、呼吸も整えながら続けようか。'],
+  mealSnackAdd: ['間食も記録できたのは立派だよ。次の食事でバランスを整えれば大丈夫。', '気づけたことがまず大切。無理に我慢しすぎず、量を意識していこうね。'],
+  mealNormalAdd: ['きちんと記録できてえらいよ。自分の体を知るための大事な一歩だね。', 'いい記録だね。次の食事も、たんぱく質を少し意識してみようか。'],
+  workoutPR: ['自己ベスト更新、おめでとう。努力がしっかり形になったね。'],
+  mealOverAngry: ['少し予定より多くなったけれど、大丈夫だよ。次の食事で無理なく整えていこうね。']
 };
 
 function greetingPrefix() {
@@ -538,7 +538,7 @@ function renderMascot() {
 }
 
 /* ===== AI通信: テキストはGroq、画像認識はGemini ===== */
-async function fetchGroqComment(prompt, { mascot = false, temperature = 0.35 } = {}) {
+async function fetchGroqComment(prompt, { mascot = false, temperature = 0.65 } = {}) {
   const apiKey = state.settings.groqApiKey;
   if (!apiKey) {
     alert('設定画面でGroq APIキーを保存してください');
@@ -557,7 +557,7 @@ async function fetchGroqComment(prompt, { mascot = false, temperature = 0.35 } =
           ? [{ role: 'system', content: personaInstruction() }, { role: 'user', content: prompt }]
           : [{ role: 'user', content: prompt }],
         temperature,
-        max_completion_tokens: 160,
+        max_completion_tokens: 220,
         include_reasoning: false
       })
     });
@@ -607,7 +607,7 @@ function personaInstruction() {
   const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
   const nameNote = name ? `ユーザーの名前は「${name}」です。「${name}${h}」と呼んでください。` : '';
   
-  return `あなたは筋トレ・食事管理アプリの専属サポートキャラクターです。返答は必ず自然な日本語で、可愛く少しギャルっぽい親しみのある口調に統一してください。一人称は「アタシ」。文末は「〜だよっ！」「〜じゃん！」「〜しよっ！」などを中心にし、敬語・事務的な説明・過度に専門的な言い回しは使わないでください。返答は1〜2文、120文字以内にしてください。運動や食事の助言は具体的で安全な内容にしてください。怒る場面でも責めずに、少しむくれた可愛い口調で注意してください。${nameNote}`;
+  return `あなたは筋トレ・食事管理アプリの、優しく頼れる先輩キャラクターです。一人称は「私」。返答は必ず自然な日本語にし、落ち着いた温かい口調で話してください。文末は「〜だよ」「〜しようね」「〜してみようか」を中心にします。まず相手の行動や気持ちを短くねぎらい、その後に具体的で実行しやすい助言を添えてください。上から目線・きつい命令・過度な敬語・事務的な説明は使いません。返答は1〜3文、180文字以内。注意が必要なときも責めずに、次にできる小さな行動を優しく示してください。${nameNote}`;
 }
 
 /* ===== 描画処理 ===== */
@@ -858,7 +858,7 @@ async function addMealRecord(name, calNum, category) {
   } else if (apiKey) {
     showMascot(category === '間食' ? 'angry' : 'smile', '栄養バランス確認中…', false);
     const expr = category === '間食' ? 'angry' : 'smile';
-    const prompt = `ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
+    const prompt = `ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。最初に短く記録をねぎらい、脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜3文で提案してください。`;
     let aiText = await fetchGroqComment(prompt, { mascot: true });
     if (aiText) aiText = `【${category}：${name} に対して】\n` + aiText;
     showMascot(expr, aiText || pickLine(category === '間食' ? 'mealSnackAdd' : 'mealNormalAdd'), true, `食事記録`);
@@ -1185,7 +1185,7 @@ function attachEvents() {
       } else if (apiKey) {
         showMascot('smile', '筋肉バランス確認中…', false);
         const exNamesToday = [...new Set(currentLogWorkouts().map(l => { const e2 = state.exercises.find(e => e.id === l.exerciseId); return e2 ? e2.name : null; }).filter(Boolean))].join('、');
-        const prompt = `ユーザーが「${ex.name}」を記録しました。本日ここまでの筋トレ種目: ${exNamesToday}。部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜2文で提案してください。褒め言葉や相槌は一切不要です。`;
+        const prompt = `ユーザーが「${ex.name}」を記録しました。本日ここまでの筋トレ種目: ${exNamesToday}。最初に短く記録をねぎらい、部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜3文で提案してください。`;
         let aiText = await fetchGroqComment(prompt, { mascot: true });
         if (aiText) aiText = `【筋トレ：${ex.name} に対して】\n` + aiText;
         showMascot('smile', aiText || pickLine('workoutAdd'), true, `筋トレ記録`);
