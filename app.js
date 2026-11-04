@@ -516,8 +516,9 @@ function renderMascot() {
   const wrap = document.getElementById('mascot-wrap');
   if (!wrap) return;
   if (!state.settings.mascotEnabled) { wrap.innerHTML = ''; return; }
+  if (typeof lastAdvice !== 'undefined' && lastAdvice && lastAdvice.tab === currentTab) { wrap.innerHTML = ''; return; }
   wrap.innerHTML = `
-    <div class="mascot-bubble ${mascotBubbleVisible ? 'show' : ''}">${escapeHtml(mascotMessage)}</div>
+    <div class="mascot-bubble ${mascotBubbleVisible ? 'show' : ''}">${formatAdviceText(mascotMessage)}</div>
     <button class="mascot-avatar-btn" id="mascot-avatar-btn"><img src="${getMascotImage(mascotExpression)}" alt="キャラ"></button>
   `;
   applyMascotPosition(wrap);
@@ -534,7 +535,7 @@ async function fetchGroqComment(prompt, opts = {}) {
   }
   const system = opts.jsonOnly
     ? 'あなたはJSON生成マシンです。指定されたJSON形式のみを返し、前置き・解説・コードフェンスは付けないでください。'
-    : personaInstruction() + '回答では、渡された記録データの具体的な数字に必ず触れてください。データに無い栄養素や数値を断定せず、推定が必要な場合は「推定」と明記し幅を持たせてください。一般論の繰り返しではなく、その人の今日の記録に合わせた具体的な次の一手を示してください。';
+    : personaInstruction() + '回答では、渡された記録データの具体的な数字に必ず触れてください。データに無い栄養素や数値を断定せず、推定が必要な場合は「推定」と明記し幅を持たせてください。一般論の繰り返しではなく、その人の今日の記録に合わせた具体的な次の一手を示してください。Markdown記法(**や#)は絶対に使わず、プレーンな文章で書いてください。';
   const models = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b'];
   let lastError = '';
   for (const model of models) {
@@ -552,7 +553,7 @@ async function fetchGroqComment(prompt, opts = {}) {
             { role: 'user', content: prompt }
           ],
           temperature: 0.7,
-          max_tokens: opts.jsonOnly ? 200 : 900
+          max_tokens: opts.maxTokens || (opts.jsonOnly ? 200 : 900)
         })
       });
       if (!res.ok) {
@@ -655,8 +656,17 @@ function buildAIContext() {
   return lines.join('\n');
 }
 
+function formatAdviceText(text) {
+  let html = escapeHtml(String(text || ''));
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*/g, '');
+  html = html.replace(/^#+\s*/gm, '');
+  html = html.replace(/^\s*[-•]\s*/gm, '・');
+  return html;
+}
+
 function presentAdvice(source, text, expression = 'smile') {
-  lastAdvice = { source, text };
+  lastAdvice = { source, text, tab: currentTab };
   addDailyAdvice(source, text);
   showMascot(expression, '詳しいアドバイスを画面の上に表示したぞ! ホームの履歴にも残してあるぞ', true);
   render();
@@ -670,7 +680,7 @@ function renderLastAdvice() {
         <strong>✨ AIアドバイス（${escapeHtml(lastAdvice.source)}）</strong>
         <button type="button" class="secondary" id="close-advice-btn" style="width:auto; padding:4px 10px; font-size:12px;">閉じる</button>
       </div>
-      <div style="white-space:pre-wrap;">${escapeHtml(lastAdvice.text)}</div>
+      <div style="white-space:pre-wrap;">${formatAdviceText(lastAdvice.text)}</div>
     </div>
   `;
 }
@@ -707,7 +717,7 @@ function renderHome() {
           <i class="ti ti-message-circle"></i>
           <div>
             <div style="font-size:11px; color:var(--text-secondary); margin-bottom:2px;">[${a.time} ${escapeHtml(a.source)}]</div>
-            <div style="white-space:pre-wrap;">${escapeHtml(a.text)}</div>
+            <div style="white-space:pre-wrap;">${formatAdviceText(a.text)}</div>
           </div>
         </div>
       `).join('')
@@ -1286,8 +1296,8 @@ function attachEvents() {
       if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       reqWorkoutBtn.textContent = '✨ AIトレーナーがメニューを考案中…'; reqWorkoutBtn.disabled = true;
       const exNamesToday = [...new Set(currentLogWorkouts().map(l => { const e2 = state.exercises.find(e => e.id === l.exerciseId); return e2 ? e2.name : null; }).filter(Boolean))].join('、');
-      const prompt = `次の記録を根拠に、詳しい筋トレアドバイスを日本語で400〜600字程度で書いてください。\n${buildAIContext()}\n\n構成: 1)今日の良い点(数字を根拠に) 2)部位バランスや総負荷で気になる点 3)次回やる具体的なメニュー(種目名・セット数・回数・重量の目安まで) 4)前回より少しだけ強くするための進め方。一般論だけで終わらせないでください。`;
-      const aiText = await fetchGroqComment(prompt);
+      const prompt = `次の記録を根拠に、筋トレアドバイスを日本語で書いてください。\n${buildAIContext()}\n\nルール: 全体で350〜450字に収めること。構成は次の3項目のみ、各項目は2文まで。1. 今日の良い点(数字を根拠に) 2. 気になる点 3. 次回の具体メニュー(種目名・セット数・回数・重量の目安)と少し強くする進め方。途中で終わらせず、3.まで必ず書き切ること。Markdown記法(**や#、箇条書きの- )は使わず、見出しは「1. 」のように書くこと。`;
+      const aiText = await fetchGroqComment(prompt, { maxTokens: 1200 });
       reqWorkoutBtn.textContent = '✨ 現状からAIに筋トレのアドバイスをもらう'; reqWorkoutBtn.disabled = false;
       if (aiText) presentAdvice('筋トレ相談', aiText);
     });
@@ -1299,8 +1309,8 @@ function attachEvents() {
       if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       reqMealBtn.textContent = '✨ AIトレーナーが食事を分析中…'; reqMealBtn.disabled = true;
       const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
-      const prompt = `次の記録を根拠に、詳しい食事アドバイスを日本語で400〜600字程度で書いてください。\n${buildAIContext()}\n\n構成: 1)今日の良い点(数字を根拠に) 2)カロリーとたんぱく質の過不足(記録に無い栄養素は断定せず、料理名からの推定は「推定」と書く) 3)次の一食の具体案(食材名と量・おおよそのkcalとたんぱく質量) 4)目標体重へ向けた今のペース評価。一般論だけで終わらせないでください。`;
-      const aiText = await fetchGroqComment(prompt);
+      const prompt = `次の記録を根拠に、食事アドバイスを日本語で書いてください。\n${buildAIContext()}\n\nルール: 全体で350〜450字に収めること。構成は次の3項目のみ、各項目は2文まで。1. 今日の良い点(数字を根拠に) 2. カロリーとたんぱく質の過不足(記録に無い栄養素は断定せず、料理名からの推定は「推定」と書く) 3. 次の一食の具体案(食材名と量・おおよそのkcalとたんぱく質量)と、目標体重へのペース評価を一言。途中で終わらせず、3.まで必ず書き切ること。Markdown記法(**や#、箇条書きの- )は使わず、見出しは「1. 」のように書くこと。`;
+      const aiText = await fetchGroqComment(prompt, { maxTokens: 1200 });
       reqMealBtn.textContent = '✨ 現状からAIに食事のアドバイスをもらう'; reqMealBtn.disabled = false;
       if (aiText) presentAdvice('食事相談', aiText);
     });
