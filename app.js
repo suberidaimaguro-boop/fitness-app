@@ -29,8 +29,7 @@ function defaultState() {
       honorific: 'さん',
       bodyHeightCm: null,
       bodyWeightKg: null,
-      basalMetabolicSex: '',
-      ageYears: null,
+      goalWeightKg: null,
       mascotEnabled: true,
       activeMascotSetId: 'set_default',
       mascotSets: [{ id: 'set_default', name: 'デフォルト', images: {} }],
@@ -58,9 +57,7 @@ function loadState() {
       if (!parsed.settings.themeAccent) parsed.settings.themeAccent = '#d4a373';
       if (!parsed.settings.themeBg) parsed.settings.themeBg = '#121212';
       if (parsed.settings.bodyHeightCm === undefined) parsed.settings.bodyHeightCm = null;
-      if (parsed.settings.bodyWeightKg === undefined) parsed.settings.bodyWeightKg = null;
-      if (parsed.settings.basalMetabolicSex === undefined) parsed.settings.basalMetabolicSex = '';
-      if (parsed.settings.ageYears === undefined) parsed.settings.ageYears = null;
+      if (parsed.settings.goalWeightKg === undefined) parsed.settings.goalWeightKg = null;
       if (parsed.settings.mascotPosition === undefined) parsed.settings.mascotPosition = null;
       if (parsed.settings.groqApiKey === undefined) parsed.settings.groqApiKey = '';
       if (!parsed.haveToList || parsed.haveToList.date !== todayKey()) {
@@ -381,15 +378,6 @@ function calculateBMI(heightCm, weightKg) {
   return { val: bmi.toFixed(1), category, advice, standardWeight };
 }
 
-function calculateBasalMetabolicRate(heightCm, weightKg, ageYears, sex) {
-  if (!heightCm || !weightKg || !ageYears || heightCm <= 0 || weightKg <= 0 || ageYears <= 0) return null;
-  if (sex !== 'male' && sex !== 'female') return null;
-
-  // Mifflin-St Jeor式（成人の推定基礎代謝量）
-  const base = (10 * weightKg) + (6.25 * heightCm) - (5 * ageYears);
-  return Math.round(base + (sex === 'male' ? 5 : -161));
-}
-
 /* ===== マスコット管理 ===== */
 const MASCOT_EXPRESSIONS = ['neutral', 'smile', 'dismay', 'angry', 'sad'];
 const MASCOT_EXPRESSION_LABELS = { neutral: '通常', smile: '笑顔', dismay: '困り', angry: '怒り', sad: '悲しい' };
@@ -426,12 +414,12 @@ function resizeImageFile(file, maxSize = 320, quality = 0.85) {
 }
 
 const MASCOT_LINES = {
-  open: ['おかえり。今日も無理のないペースで、一緒に進めようね。', '来てくれてうれしいな。今日の調子を少しずつ整えていこうか。', '今日もおつかれさま。できることから始めようね。'],
-  workoutAdd: ['記録できてえらいよ。この積み重ねが、ちゃんと力になるからね。', 'ナイスセット。今の調子で、呼吸も整えながら続けようか。'],
-  mealSnackAdd: ['間食も記録できたのは立派だよ。次の食事でバランスを整えれば大丈夫。', '気づけたことがまず大切。無理に我慢しすぎず、量を意識していこうね。'],
-  mealNormalAdd: ['きちんと記録できてえらいよ。自分の体を知るための大事な一歩だね。', 'いい記録だね。次の食事も、たんぱく質を少し意識してみようか。'],
-  workoutPR: ['自己ベスト更新、おめでとう。努力がしっかり形になったね。'],
-  mealOverAngry: ['少し予定より多くなったけれど、大丈夫だよ。次の食事で無理なく整えていこうね。']
+  open: ['今日もがんばろ!', 'おかえり!調子はどう?', 'よし、記録つけていこ!'],
+  workoutAdd: ['頑張っててえらいぞ!', 'ナイスセット!その調子!'],
+  mealSnackAdd: ['もう、食べすぎたらダメだぞ!', '間食はほどほどにね…'],
+  mealNormalAdd: ['ちゃんと記録できてえらい!', 'いいね、その調子!'],
+  workoutPR: ['自己ベスト更新、すごいじゃん!'],
+  mealOverAngry: ['ちょっと!カロリー上限オーバーしてるじゃん!もう今日はこれ以上食べちゃダメだぞ!']
 };
 
 function greetingPrefix() {
@@ -538,67 +526,93 @@ function renderMascot() {
 }
 
 /* ===== AI通信: テキストはGroq、画像認識はGemini ===== */
-async function fetchGroqComment(prompt, { mascot = false, temperature = 0.65 } = {}) {
+async function fetchGroqComment(prompt, opts = {}) {
   const apiKey = state.settings.groqApiKey;
   if (!apiKey) {
     alert('設定画面でGroq APIキーを保存してください');
     return null;
   }
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'openai/gpt-oss-20b',
-        messages: mascot
-          ? [{ role: 'system', content: personaInstruction() }, { role: 'user', content: prompt }]
-          : [{ role: 'user', content: prompt }],
-        temperature,
-        max_completion_tokens: 220,
-        include_reasoning: false
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(`【Groqエラー】\nコード: ${res.status}\n内容: ${err.error?.message || '不明なエラー'}`);
-      return null;
+  const system = opts.jsonOnly
+    ? 'あなたはJSON生成マシンです。指定されたJSON形式のみを返し、前置き・解説・コードフェンスは付けないでください。'
+    : personaInstruction() + '回答では、渡された記録データの具体的な数字に必ず触れてください。データに無い栄養素や数値を断定せず、推定が必要な場合は「推定」と明記し幅を持たせてください。一般論の繰り返しではなく、その人の今日の記録に合わせた具体的な次の一手を示してください。';
+  const models = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b'];
+  let lastError = '';
+  for (const model of models) {
+    try {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.7,
+          max_tokens: opts.jsonOnly ? 200 : 900
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        lastError = `${res.status}: ${err.error?.message || '不明なエラー'}`;
+        if (res.status === 404 || res.status === 400) continue;
+        alert(`【Groqエラー】\nコード: ${res.status}\n内容: ${err.error?.message || '不明なエラー'}`);
+        return null;
+      }
+      const data = await res.json();
+      const text = data?.choices?.[0]?.message?.content?.trim();
+      if (text) return text;
+      lastError = 'empty response';
+    } catch (e) {
+      lastError = e.message;
     }
-    const data = await res.json();
-    return data?.choices?.[0]?.message?.content?.trim() || null;
-  } catch (e) {
-    alert(`【通信エラー】\n${e.message}`);
-    return null;
   }
+  alert(`【Groqエラー】\n利用できるモデルがありませんでした。\n内容: ${lastError}`);
+  return null;
 }
 
 async function fetchGeminiFoodRecognition(file) {
   const apiKey = state.settings.geminiApiKey;
   if (!apiKey) return { error: 'no_key' };
   try {
-    const base64Data = await fileToBase64Raw(file);
-    const prompt = '料理の名前と推定カロリー(kcal、整数)を判定し、{"name": "料理名", "calories": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    let base64Data;
+    let mimeType = 'image/jpeg';
+    try {
+      const dataUrl = await resizeImageFile(file, 1024, 0.82);
+      base64Data = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    } catch (convErr) {
+      base64Data = await fileToBase64Raw(file);
+      mimeType = file.type || 'image/jpeg';
+    }
+    const prompt = '写真の食事全体を見て、料理名(複数ある場合は「○○と△△」のようにまとめる)、推定カロリー(kcal、整数)、推定たんぱく質量(g、整数)、短い根拠メモを判定し、{"name": "料理名", "calories": 数値, "protein_g": 数値, "note": "根拠を30字以内"} のJSON形式のみ返してください。量が写真から判断できない部分は一般的な1人前として推定し、前置きや解説はJSON以外に一切付けないでください。';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ inline_data: { mime_type: file.type || 'image/jpeg', data: base64Data } }, { text: prompt }] }]
+        contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: base64Data } }, { text: prompt }] }],
+        generationConfig: { temperature: 0.2, response_mime_type: 'application/json' }
       })
     });
     if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      return { error: 'failed', detail: error.error?.message || `エラーコード ${res.status}` };
+      const err = await res.json().catch(() => ({}));
+      return { error: 'failed', detail: `${res.status}: ${err.error?.message || '不明なエラー'}` };
     }
     const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return { error: 'no_text' };
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
+    if (!text) return { error: 'no_text', detail: 'AIから本文が返りませんでした' };
     const cleaned = text.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(cleaned);
-    return { name: parsed.name, calories: Math.round(parsed.calories) };
+    return {
+      name: parsed.name,
+      calories: Math.round(parsed.calories),
+      protein: (parsed.protein_g !== undefined && parsed.protein_g !== null) ? Math.round(parsed.protein_g) : null,
+      note: parsed.note || ''
+    };
   } catch (e) {
-    return { error: 'exception' };
+    return { error: 'exception', detail: e.message };
   }
 }
 
@@ -606,8 +620,59 @@ function personaInstruction() {
   const name = (state.settings.userName || '').trim();
   const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
   const nameNote = name ? `ユーザーの名前は「${name}」です。「${name}${h}」と呼んでください。` : '';
-  
-  return `あなたは筋トレ・食事管理アプリの、優しく頼れる先輩キャラクターです。一人称は「私」。返答は必ず自然な日本語にし、落ち着いた温かい口調で話してください。文末は「〜だよ」「〜しようね」「〜してみようか」を中心にします。まず相手の行動や気持ちを短くねぎらい、その後に具体的で実行しやすい助言を添えてください。上から目線・きつい命令・過度な敬語・事務的な説明は使いません。返答は1〜3文、180文字以内。注意が必要なときも責めずに、次にできる小さな行動を優しく示してください。${nameNote}`;
+  return `あなたは筋トレ・食事管理アプリの応援キャラです。口調はタメ口寄りのフランクで元気なノリにしてください(「〜だよ」ではなく「〜だぞ!」「〜じゃん!」)。${nameNote}`;
+}
+
+/* ===== v28: AIへ渡す文脈と、長文アドバイス表示 ===== */
+let lastAdvice = null;
+
+function buildAIContext() {
+  const s = state.settings;
+  const bmi = calculateBMI(s.bodyHeightCm, s.bodyWeightKg);
+  const lines = [];
+  lines.push(`プロフィール: 身長${s.bodyHeightCm ?? '未設定'}cm / 体重${s.bodyWeightKg ?? '未設定'}kg${bmi ? ` / BMI ${bmi.val}` : ''}${s.goalWeightKg ? ` / 目標体重 ${s.goalWeightKg}kg` : ''}`);
+  lines.push(`目標: 1日 ${state.goals.dailySetTarget}セット / ${state.goals.dailyCalorieTarget}kcalまで`);
+  const wToday = currentLogWorkouts().map(l => {
+    const e2 = state.exercises.find(e => e.id === l.exerciseId);
+    const parts = [];
+    if (l.weight !== undefined) parts.push(`${l.weight}kg`);
+    if (l.reps !== undefined) parts.push(`${l.reps}回`);
+    if (l.time !== undefined) parts.push(formatDuration(l.time));
+    return `${e2 ? e2.name : '種目'} ${parts.join('×')}`;
+  });
+  lines.push(`対象日の筋トレ(${currentLogWorkouts().length}セット): ${wToday.length ? wToday.join('、') : 'なし'}`);
+  const mToday = currentLogMeals();
+  lines.push(`対象日の食事(合計${currentCalorieTotal()}kcal / たんぱく質合計${mToday.reduce((sum, m) => sum + (Number(m.protein) || 0), 0)}g): ${mToday.length ? mToday.map(m => `${m.category}:${m.name}(${m.calories}kcal${m.protein ? `/P${m.protein}g` : ''})`).join('、') : 'なし'}`);
+  const daily = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const sets = state.workoutLogs.filter(l => l.date === key).length;
+    const kcal = state.meals.filter(m => m.date === key).reduce((sum, m) => sum + (Number(m.calories) || 0), 0);
+    daily.push(`${key}: ${sets}セット/${kcal}kcal`);
+  }
+  lines.push(`直近7日: ${daily.join(' / ')}`);
+  return lines.join('\n');
+}
+
+function presentAdvice(source, text, expression = 'smile') {
+  lastAdvice = { source, text };
+  addDailyAdvice(source, text);
+  showMascot(expression, '詳しいアドバイスを画面の上に表示したぞ! ホームの履歴にも残してあるぞ', true);
+  render();
+}
+
+function renderLastAdvice() {
+  if (!lastAdvice) return '';
+  return `
+    <div class="advice-card" style="flex-direction:column; gap:8px; align-items:stretch;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <strong>✨ AIアドバイス（${escapeHtml(lastAdvice.source)}）</strong>
+        <button type="button" class="secondary" id="close-advice-btn" style="width:auto; padding:4px 10px; font-size:12px;">閉じる</button>
+      </div>
+      <div style="white-space:pre-wrap;">${escapeHtml(lastAdvice.text)}</div>
+    </div>
+  `;
 }
 
 /* ===== 描画処理 ===== */
@@ -642,7 +707,7 @@ function renderHome() {
           <i class="ti ti-message-circle"></i>
           <div>
             <div style="font-size:11px; color:var(--text-secondary); margin-bottom:2px;">[${a.time} ${escapeHtml(a.source)}]</div>
-            <div>${escapeHtml(a.text)}</div>
+            <div style="white-space:pre-wrap;">${escapeHtml(a.text)}</div>
           </div>
         </div>
       `).join('')
@@ -739,10 +804,12 @@ function renderWorkout() {
     selectedExerciseId = state.exercises[0].id;
   }
   const ex = state.exercises.find(e => e.id === selectedExerciseId);
+  const exLogsAll = state.workoutLogs.filter(l => l.exerciseId === ex.id);
+  const lastLog = exLogsAll.length ? exLogsAll[exLogsAll.length - 1] : null;
 
   const inputs = [];
-  if (ex.trackWeight) inputs.push(`<div class="field"><label>重量 (kg)</label><input type="number" id="input-weight" inputmode="decimal" placeholder="60"></div>`);
-  if (ex.trackReps) inputs.push(`<div class="field"><label>回数</label><input type="number" id="input-reps" inputmode="numeric" placeholder="10"></div>`);
+  if (ex.trackWeight) inputs.push(`<div class="field"><label>重量 (kg)${lastLog && lastLog.weight !== undefined ? ` <span class="sub">前回: ${lastLog.weight}kg</span>` : ''}</label><input type="number" id="input-weight" inputmode="decimal" placeholder="60" value="${lastLog && lastLog.weight !== undefined ? lastLog.weight : '' }"></div>`);
+  if (ex.trackReps) inputs.push(`<div class="field"><label>回数${lastLog && lastLog.reps !== undefined ? ` <span class="sub">前回: ${lastLog.reps}回</span>` : ''}</label><input type="number" id="input-reps" inputmode="numeric" placeholder="10" value="${lastLog && lastLog.reps !== undefined ? lastLog.reps : '' }"></div>`);
   if (ex.trackTime) {
     const isRunningThis = activeTimer && activeTimer.exerciseId === ex.id;
     inputs.push(`
@@ -802,20 +869,13 @@ function renderWorkout() {
   `;
 
   return `
+    ${renderLastAdvice()}
     <div class="field">
       <label>記録する日付</label>
       <input type="date" id="active-log-date-workout" value="${activeLogDate}">
     </div>
     <div class="field"><label>種目</label><select id="exercise-select">${state.exercises.map(e => `<option value="${e.id}" ${e.id === ex.id ? 'selected' : ''}>${escapeHtml(e.name)}</option>`).join('')}</select></div>
-    <div class="field">
-      <label>運動強度(今回の記録用)</label>
-      <select id="input-met">
-        <option value="3.0" ${(selectedMetValue ?? (ex.met || 5.0)) == 3.0 ? 'selected' : ''}>軽め</option>
-        <option value="5.0" ${(selectedMetValue ?? (ex.met || 5.0)) == 5.0 ? 'selected' : ''}>普通</option>
-        <option value="7.0" ${(selectedMetValue ?? (ex.met || 5.0)) == 7.0 ? 'selected' : ''}>きつい</option>
-        <option value="9.0" ${(selectedMetValue ?? (ex.met || 5.0)) == 9.0 ? 'selected' : ''}>非常にきつい</option>
-      </select>
-    </div>
+    <p class="sub" style="margin:0 0 16px;">消費カロリーは種目ごとの強度（MET ${ex.met || 5.0}）からの推定値です。体重・実際のきつさで変わるので目安として見てください。</p>
     ${inputs.join('')}
     <button class="primary" id="add-set-btn">記録を追加</button>
     
@@ -840,12 +900,12 @@ function fileToBase64Raw(file) {
   });
 }
 
-async function addMealRecord(name, calNum, category) {
+async function addMealRecord(name, calNum, category, proteinG = null) {
   const target = state.goals.dailyCalorieTarget;
   const beforeTotal = currentCalorieTotal();
   const afterTotal = beforeTotal + calNum;
 
-  state.meals.push({ id: uid(), category, name, calories: calNum, date: activeLogDate });
+  state.meals.push({ id: uid(), category, name, calories: calNum, date: activeLogDate, ...((proteinG !== null && proteinG !== '' && !isNaN(Number(proteinG))) ? { protein: Number(proteinG) } : {}) });
   saveState(); render(); triggerScreenGlow('meal');
 
   const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
@@ -853,13 +913,13 @@ async function addMealRecord(name, calNum, category) {
 
   if (target > 0 && afterTotal > target) {
     showMascot('angry', 'カロリーオーバー確認中…', false);
-    const aiText = await fetchGroqComment(`ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`, { mascot: true });
+    const aiText = await fetchGroqComment(`${personaInstruction()}ユーザーが「${name}」(${calNum}kcal)を食べたことで、本日の摂取カロリーが${afterTotal}kcalとなり、目標の${target}kcalを超えてしまいました。愛情を持って叱るセリフを2文以内で返してください。前置きは不要です。`);
     showMascot('angry', aiText || pickLine('mealOverAngry'), true, `警告`);
   } else if (apiKey) {
     showMascot(category === '間食' ? 'angry' : 'smile', '栄養バランス確認中…', false);
     const expr = category === '間食' ? 'angry' : 'smile';
-    const prompt = `ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。本日ここまでの食事: ${todaysMealList}。最初に短く記録をねぎらい、脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜3文で提案してください。`;
-    let aiText = await fetchGroqComment(prompt, { mascot: true });
+    const prompt = `ユーザーが「${name}」(${calNum}kcal)を${category}として記録しました。\n${buildAIContext()}\n記録にある数字を根拠に、足りていないものを具体的な食材名と量の目安で2〜3文提案してください。記録に無い栄養素の量は断定しないでください。`;
+    let aiText = await fetchGroqComment(prompt);
     if (aiText) aiText = `【${category}：${name} に対して】\n` + aiText;
     showMascot(expr, aiText || pickLine(category === '間食' ? 'mealSnackAdd' : 'mealNormalAdd'), true, `食事記録`);
   } else if (category === '間食') {
@@ -872,6 +932,7 @@ async function addMealRecord(name, calNum, category) {
 function renderMeal() {
   const meals = currentLogMeals();
   const total = currentCalorieTotal();
+  const proteinTotal = meals.reduce((s, m) => s + (Number(m.protein) || 0), 0);
   const groups = MEAL_CATEGORIES.map(cat => {
     const items = meals.filter(m => m.category === cat);
     if (items.length === 0) return '';
@@ -879,7 +940,7 @@ function renderMeal() {
       <div class="list-row">
         <span class="val">${escapeHtml(m.name)}</span>
         <span style="display:flex; align-items:center; gap:8px;">
-          <span class="val gold">${Number(m.calories).toLocaleString()} kcal</span>
+          <span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / P${m.protein}g` : ''}</span>
           <button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button>
         </span>
       </div>`).join('');
@@ -889,6 +950,7 @@ function renderMeal() {
   const favoriteChips = state.favoriteMeals.map(f => `<span class="chip" data-favorite-tap="${f.id}">${escapeHtml(f.name)}(${f.calories}kcal)<button type="button" class="chip-remove" data-favorite-remove="${f.id}">&times;</button></span>`).join('');
 
   return `
+    ${renderLastAdvice()}
     <div class="field">
       <label>記録する日付</label>
       <input type="date" id="active-log-date-meal" value="${activeLogDate}">
@@ -906,6 +968,10 @@ function renderMeal() {
     <div class="field">
       <label>カロリー (kcal)</label>
       <input type="number" id="meal-calories" inputmode="numeric" placeholder="350">
+    </div>
+    <div class="field">
+      <label>たんぱく質 (g) ※任意・写真解析で自動入力</label>
+      <input type="number" id="meal-protein" inputmode="decimal" placeholder="25">
     </div>
     
     <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー推測 (Groq)</button>
@@ -928,7 +994,7 @@ function renderMeal() {
 
     <p class="section-title">${activeLogDate === todayKey() ? '今日' : activeLogDate} の記録</p>
     ${groups || `<div class="empty-hint">この日の記録はまだありません</div>`}
-    <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div></div>
+    <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div>${proteinTotal > 0 ? `<div class="total-row"><span class="label">たんぱく質合計</span><span class="value">${proteinTotal} g</span></div>` : ''}</div>
   `;
 }
 
@@ -955,7 +1021,7 @@ function renderHistory() {
   let totalMealKcal = 0;
   const mealRows = meals.map(m => {
     totalMealKcal += (Number(m.calories) || 0);
-    return `<div class="list-row"><span class="val">${escapeHtml(m.name)} <span class="sub">${m.category}</span></span><span style="display:flex; align-items:center; gap:8px;"><span class="val gold">${Number(m.calories).toLocaleString()} kcal</span><button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button></span></div>`;
+    return `<div class="list-row"><span class="val">${escapeHtml(m.name)} <span class="sub">${m.category}</span></span><span style="display:flex; align-items:center; gap:8px;"><span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / P${m.protein}g` : ''}</span><button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button></span></div>`;
   }).join('');
 
   const netKcal = totalMealKcal - totalWorkoutKcal;
@@ -991,26 +1057,15 @@ function renderHistory() {
 function renderSettings() {
   const activeSet = getActiveSet();
   const bmiData = calculateBMI(state.settings.bodyHeightCm, state.settings.bodyWeightKg);
-  const bmr = calculateBasalMetabolicRate(
-    state.settings.bodyHeightCm,
-    state.settings.bodyWeightKg,
-    state.settings.ageYears,
-    state.settings.basalMetabolicSex
-  );
 
   return `
     <p class="section-title">基本情報</p>
     <div class="field"><label>名前</label><input type="text" id="user-name" value="${escapeHtml(state.settings.userName || '')}" placeholder="たろう"></div>
-    <div class="row-2">
-      <div class="field"><label>計算用の性別</label><select id="basal-metabolic-sex"><option value="">選択してください</option><option value="male" ${state.settings.basalMetabolicSex === 'male' ? 'selected' : ''}>男性</option><option value="female" ${state.settings.basalMetabolicSex === 'female' ? 'selected' : ''}>女性</option></select></div>
-      <div class="field"><label>年齢</label><input type="number" id="age-years" inputmode="numeric" min="18" max="120" value="${state.settings.ageYears ?? ''}" placeholder="30"></div>
-    </div>
     <div class="field"><label>身長 (cm)</label><input type="number" id="body-height" inputmode="decimal" value="${state.settings.bodyHeightCm ?? ''}" placeholder="170"></div>
     <div class="field"><label>体重 (kg)</label><input type="number" id="body-weight" inputmode="decimal" value="${state.settings.bodyWeightKg ?? ''}" placeholder="65"></div>
+    <div class="field"><label>目標体重 (kg) ※AIアドバイスの根拠に使います</label><input type="number" id="goal-weight" inputmode="decimal" value="${state.settings.goalWeightKg ?? ''}" placeholder="60"></div>
     <div class="bmi-card"><span class="label" style="margin:0;"><i class="ti ti-calculator"></i> 現在のBMI</span><span class="value gold">${bmiData ? `${bmiData.val} <span class="unit">(${bmiData.category})</span>` : '<span class="sub">身長・体重を入力で計算</span>'}</span></div>
     ${bmiData ? `<div class="bmi-detail-box">💡 ${bmiData.advice}</div>` : ''}
-    <div class="bmi-card" style="margin-top:10px;"><span class="label" style="margin:0;"><i class="ti ti-flame"></i> 推定基礎代謝量</span><span class="value gold">${bmr ? `約${bmr.toLocaleString()} <span class="unit">kcal / 日</span>` : '<span class="sub">性別・年齢・身長・体重を入力で計算</span>'}</span></div>
-    ${bmr ? '<div class="bmi-detail-box">💡 何もしなくても生命維持のために消費する、1日あたりの推定カロリーです。運動や日常活動で使う分は含みません。</div>' : ''}
     <button class="primary" id="save-profile-btn" style="margin-bottom:20px;">基本情報を保存</button>
 
     <p class="section-title">目標設定</p>
@@ -1108,6 +1163,8 @@ function render() {
 
 function attachEvents() {
   document.querySelectorAll('[data-tab]').forEach(btn => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
+  const closeAdviceBtn = document.getElementById('close-advice-btn');
+  if (closeAdviceBtn) closeAdviceBtn.addEventListener('click', () => { lastAdvice = null; render(); });
   document.querySelectorAll('.weekly-toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => { weeklyViewMode = btn.dataset.mode; render(); });
   });
@@ -1169,10 +1226,12 @@ function attachEvents() {
     addSetBtn.addEventListener('click', async () => {
       const ex = state.exercises.find(e => e.id === selectedExerciseId);
       const log = { id: uid(), exerciseId: ex.id, date: activeLogDate };
-      log.met = Number(document.getElementById('input-met').value) || 5.0;
+      log.met = ex.met || 5.0;
       if (ex.trackWeight) log.weight = Number(document.getElementById('input-weight').value) || 0;
       if (ex.trackReps) log.reps = Number(document.getElementById('input-reps').value) || 0;
       if (ex.trackTime) log.time = (Number(document.getElementById('input-time').value) || 0) * Number(document.getElementById('input-time-unit').value);
+      const hasValue = (ex.trackWeight && log.weight > 0) || (ex.trackReps && log.reps > 0) || (ex.trackTime && log.time > 0);
+      if (!hasValue) { alert('重量・回数・時間のいずれかを入力してください。空の記録は追加しません。'); return; }
       const prevBest = ex.trackWeight ? previousBestWeight(ex.id) : null;
       state.workoutLogs.push(log); saveState(); render(); triggerScreenGlow('workout');
       
@@ -1180,13 +1239,13 @@ function attachEvents() {
       const apiKey = state.settings.groqApiKey;
       if (isPR) {
         showMascot('smile', '自己ベスト更新中…!', false);
-        const aiText = await fetchGroqComment(`ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`, { mascot: true });
+        const aiText = await fetchGroqComment(`${personaInstruction()}ユーザーが「${ex.name}」で自己新記録(${log.weight}kg)を達成しました！大興奮で褒め称えるセリフを2文以内で返してください。前置きは不要です。`);
         showMascot('smile', aiText || pickLine('workoutPR'), true, `自己ベスト`);
       } else if (apiKey) {
         showMascot('smile', '筋肉バランス確認中…', false);
         const exNamesToday = [...new Set(currentLogWorkouts().map(l => { const e2 = state.exercises.find(e => e.id === l.exerciseId); return e2 ? e2.name : null; }).filter(Boolean))].join('、');
-        const prompt = `ユーザーが「${ex.name}」を記録しました。本日ここまでの筋トレ種目: ${exNamesToday}。最初に短く記録をねぎらい、部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜3文で提案してください。`;
-        let aiText = await fetchGroqComment(prompt, { mascot: true });
+        const prompt = `ユーザーが「${ex.name}」を記録しました。\n${buildAIContext()}\nこの種目で使った部位と、今日の他の種目とのバランスを見て、次にやるべき具体的な種目名かケア方法を、数字や部位名を入れて2〜3文で提案してください。`;
+        let aiText = await fetchGroqComment(prompt);
         if (aiText) aiText = `【筋トレ：${ex.name} に対して】\n` + aiText;
         showMascot('smile', aiText || pickLine('workoutAdd'), true, `筋トレ記録`);
       } else { showMascot('smile', pickLine('workoutAdd'), true, `筋トレ記録`); }
@@ -1227,10 +1286,10 @@ function attachEvents() {
       if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       reqWorkoutBtn.textContent = '✨ AIトレーナーがメニューを考案中…'; reqWorkoutBtn.disabled = true;
       const exNamesToday = [...new Set(currentLogWorkouts().map(l => { const e2 = state.exercises.find(e => e.id === l.exerciseId); return e2 ? e2.name : null; }).filter(Boolean))].join('、');
-      const prompt = exNamesToday ? `ユーザーの今日の筋トレ種目: ${exNamesToday}。部位バランスの観点から次に取り組むべき具体的なトレーニング種目や、使った筋肉のケア方法を1〜2文で提案してください。褒め言葉や相槌は不要です。` : `ユーザーは今日まだ筋トレをしていません。モチベーションを上げるような、今日のおすすめ部位やトレーニングを1〜2文で提案してください。褒め言葉や相槌は不要です。`;
-      const aiText = await fetchGroqComment(prompt, { mascot: true });
+      const prompt = `次の記録を根拠に、詳しい筋トレアドバイスを日本語で400〜600字程度で書いてください。\n${buildAIContext()}\n\n構成: 1)今日の良い点(数字を根拠に) 2)部位バランスや総負荷で気になる点 3)次回やる具体的なメニュー(種目名・セット数・回数・重量の目安まで) 4)前回より少しだけ強くするための進め方。一般論だけで終わらせないでください。`;
+      const aiText = await fetchGroqComment(prompt);
       reqWorkoutBtn.textContent = '✨ 現状からAIに筋トレのアドバイスをもらう'; reqWorkoutBtn.disabled = false;
-      if (aiText) showMascot('smile', aiText, true, '筋トレ相談');
+      if (aiText) presentAdvice('筋トレ相談', aiText);
     });
   }
 
@@ -1240,10 +1299,10 @@ function attachEvents() {
       if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       reqMealBtn.textContent = '✨ AIトレーナーが食事を分析中…'; reqMealBtn.disabled = true;
       const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
-      const prompt = todaysMealList ? `今日の食事: ${todaysMealList}。脂質・たんぱく質・糖質などの栄養バランスの観点から、不足している栄養素や次に食べるべき具体的な食材を1〜2文で提案してください。褒め言葉や相槌は不要です。` : `ユーザーは今日まだ食事を記録していません。健康的な1日のスタートにおすすめの食材やメニューを1〜2文で提案してください。褒め言葉や相槌は不要です。`;
-      const aiText = await fetchGroqComment(prompt, { mascot: true });
+      const prompt = `次の記録を根拠に、詳しい食事アドバイスを日本語で400〜600字程度で書いてください。\n${buildAIContext()}\n\n構成: 1)今日の良い点(数字を根拠に) 2)カロリーとたんぱく質の過不足(記録に無い栄養素は断定せず、料理名からの推定は「推定」と書く) 3)次の一食の具体案(食材名と量・おおよそのkcalとたんぱく質量) 4)目標体重へ向けた今のペース評価。一般論だけで終わらせないでください。`;
+      const aiText = await fetchGroqComment(prompt);
       reqMealBtn.textContent = '✨ 現状からAIに食事のアドバイスをもらう'; reqMealBtn.disabled = false;
-      if (aiText) showMascot('smile', aiText, true, '食事相談');
+      if (aiText) presentAdvice('食事相談', aiText);
     });
   }
 
@@ -1276,9 +1335,11 @@ function attachEvents() {
       if (!state.settings.geminiApiKey) { if (statusEl) statusEl.textContent = '設定画面でGemini APIキーを登録してください'; return; }
       if (statusEl) statusEl.textContent = 'AIが写真から料理とカロリーを解析中…';
       const result = await fetchGeminiFoodRecognition(file);
-      if (result.error) { if (statusEl) statusEl.textContent = `判定に失敗しました（${result.detail || '通信エラー'}）。手動で入力してください。`; return; }
+      if (result.error) { if (statusEl) statusEl.textContent = `判定に失敗しました。手動で入力してください。(詳細: ${result.detail || result.error})`; return; }
       document.getElementById('meal-name').value = result.name; document.getElementById('meal-calories').value = result.calories;
-      if (statusEl) statusEl.textContent = `判定結果を入力しました: ${result.name} (約${result.calories}kcal)`;
+      const proteinInput = document.getElementById('meal-protein');
+      if (proteinInput && result.protein !== null && result.protein !== undefined) proteinInput.value = result.protein;
+      if (statusEl) statusEl.textContent = `判定結果を入力しました: ${result.name} (約${result.calories}kcal${result.protein ? ` / たんぱく質約${result.protein}g` : ''})${result.note ? ` ※${result.note}` : ''} ※量は写真からの推定です。記録前に数字を確認してください`;
     });
   }
 
@@ -1291,7 +1352,8 @@ function attachEvents() {
     addMealBtn.addEventListener('click', () => {
       const name = document.getElementById('meal-name').value.trim(); const cal = document.getElementById('meal-calories').value;
       if (!name || cal === '') { alert('食べたものとカロリーを入力してください'); return; }
-      addMealRecord(name, Number(cal), document.getElementById('meal-category-select').value);
+      const proteinVal = document.getElementById('meal-protein') ? document.getElementById('meal-protein').value : '';
+      addMealRecord(name, Number(cal), document.getElementById('meal-category-select').value, proteinVal === '' ? null : Number(proteinVal));
     });
   }
   document.querySelectorAll('[data-delete-meal]').forEach(btn => {
@@ -1313,10 +1375,9 @@ function attachEvents() {
   if (saveProfileBtn) {
     saveProfileBtn.addEventListener('click', () => {
       state.settings.userName = document.getElementById('user-name').value.trim();
-      state.settings.basalMetabolicSex = document.getElementById('basal-metabolic-sex').value;
-      const ageVal = document.getElementById('age-years').value; state.settings.ageYears = ageVal === '' ? null : Number(ageVal);
       const hVal = document.getElementById('body-height').value; state.settings.bodyHeightCm = hVal === '' ? null : Number(hVal);
       const wVal = document.getElementById('body-weight').value; state.settings.bodyWeightKg = wVal === '' ? null : Number(wVal);
+      const gVal = document.getElementById('goal-weight').value; state.settings.goalWeightKg = gVal === '' ? null : Number(gVal);
       saveState(); render(); alert('基本情報を保存しました');
     });
   }
@@ -1418,7 +1479,7 @@ function attachEvents() {
       if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       const prevText = aiGuessBtn.textContent; aiGuessBtn.textContent = '推測中...'; aiGuessBtn.disabled = true;
       const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)を推測し、{"calories": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。`;
-      const resText = await fetchGroqComment(prompt);
+      const resText = await fetchGroqComment(prompt, { jsonOnly: true });
       aiGuessBtn.textContent = prevText; aiGuessBtn.disabled = false;
       try {
         const cleaned = resText.replace(/```json|```/g, '').trim(); const parsed = JSON.parse(cleaned);

@@ -364,11 +364,15 @@ button.secondary {
   transform: translateY(6px);
   transition: opacity 0.25s ease, transform 0.25s ease;
   pointer-events: none;
+  white-space: pre-wrap;
+  max-height: 42vh;
+  overflow-y: auto;
 }
 
 .mascot-bubble.show {
   opacity: 1;
   transform: translateY(0);
+  pointer-events: auto;
 }
 
 .mascot-avatar-btn {
