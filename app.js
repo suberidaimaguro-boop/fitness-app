@@ -957,7 +957,7 @@ function renderMeal() {
     return `<p class="section-title">${cat}</p><div class="list-card">${rows}</div>`;
   }).join('');
 
-  const favoriteChips = state.favoriteMeals.map(f => `<span class="chip" data-favorite-tap="${f.id}">${escapeHtml(f.name)}(${f.calories}kcal)<button type="button" class="chip-remove" data-favorite-remove="${f.id}">&times;</button></span>`).join('');
+  const favoriteChips = state.favoriteMeals.map(f => `<span class="chip" data-favorite-tap="${f.id}">${escapeHtml(f.name)}(${f.calories}kcal${f.protein ? `/P${f.protein}g` : ''})<button type="button" class="chip-remove" data-favorite-remove="${f.id}">&times;</button></span>`).join('');
 
   return `
     ${renderLastAdvice()}
@@ -984,7 +984,7 @@ function renderMeal() {
       <input type="number" id="meal-protein" inputmode="decimal" placeholder="25">
     </div>
     
-    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー推測 (Groq)</button>
+    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー・たんぱく質推測 (Groq)</button>
     <button class="primary" id="add-meal-btn">記録を追加</button>
     <button class="secondary" id="save-favorite-btn" style="margin-bottom:12px;">☆ 今の内容を「よく食べるもの」に登録</button>
 
@@ -1322,7 +1322,7 @@ function attachEvents() {
     chip.addEventListener('click', (e) => {
       if (e.target.closest('[data-favorite-remove]')) return;
       const fav = state.favoriteMeals.find(f => f.id === chip.dataset.favoriteTap);
-      if (fav) addMealRecord(fav.name, fav.calories, selectedMealCategory);
+      if (fav) addMealRecord(fav.name, fav.calories, selectedMealCategory, (fav.protein !== undefined && fav.protein !== null) ? fav.protein : null);
     });
   });
   document.querySelectorAll('[data-favorite-remove]').forEach(btn => {
@@ -1333,7 +1333,9 @@ function attachEvents() {
     saveFavoriteBtn.addEventListener('click', () => {
       const name = document.getElementById('meal-name').value.trim(); const cal = document.getElementById('meal-calories').value;
       if (!name || cal === '') { alert('食べたものとカロリーを入力してください'); return; }
-      state.favoriteMeals.push({ id: uid(), name, calories: Number(cal) }); saveState(); favListOpen = true; render();
+      const proteinInput = document.getElementById('meal-protein');
+      const proteinVal = proteinInput ? proteinInput.value : '';
+      state.favoriteMeals.push({ id: uid(), name, calories: Number(cal), ...(proteinVal !== '' && !isNaN(Number(proteinVal)) ? { protein: Number(proteinVal) } : {}) }); saveState(); favListOpen = true; render();
     });
   }
 
@@ -1488,12 +1490,14 @@ function attachEvents() {
       if (!name) { alert('先に食べたものを入力してください'); return; }
       if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       const prevText = aiGuessBtn.textContent; aiGuessBtn.textContent = '推測中...'; aiGuessBtn.disabled = true;
-      const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)を推測し、{"calories": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。`;
+      const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)とたんぱく質量(g、整数)を推測し、{"calories": 数値, "protein_g": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。`;
       const resText = await fetchGroqComment(prompt, { jsonOnly: true });
       aiGuessBtn.textContent = prevText; aiGuessBtn.disabled = false;
       try {
         const cleaned = resText.replace(/```json|```/g, '').trim(); const parsed = JSON.parse(cleaned);
         document.getElementById('meal-calories').value = parsed.calories;
+        const proteinInput = document.getElementById('meal-protein');
+        if (proteinInput && parsed.protein_g !== undefined && parsed.protein_g !== null && !isNaN(Number(parsed.protein_g))) proteinInput.value = Math.round(Number(parsed.protein_g));
       } catch (e) { alert('推測に失敗しました。手動で入力してください。'); }
     });
   }
@@ -1501,9 +1505,12 @@ function attachEvents() {
   const mealNameInput = document.getElementById('meal-name');
   if (mealNameInput) {
     mealNameInput.addEventListener('change', () => {
-      const name = mealNameInput.value.trim(); const pastMeal = state.meals.find(m => m.name === name);
+      const name = mealNameInput.value.trim();
+      const pastMeal = [...state.meals].reverse().find(m => m.name === name);
       const calInput = document.getElementById('meal-calories');
       if (pastMeal && !calInput.value) { calInput.value = pastMeal.calories; }
+      const proteinInput = document.getElementById('meal-protein');
+      if (pastMeal && proteinInput && !proteinInput.value && pastMeal.protein !== undefined && pastMeal.protein !== null) { proteinInput.value = pastMeal.protein; }
     });
   }
 }
