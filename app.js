@@ -588,7 +588,7 @@ async function fetchGeminiFoodRecognition(file) {
       base64Data = await fileToBase64Raw(file);
       mimeType = file.type || 'image/jpeg';
     }
-    const prompt = '写真の食事全体を見て、料理名(複数ある場合は「○○と△△」のようにまとめる)、推定カロリー(kcal、整数)、推定たんぱく質量(g、整数)、短い根拠メモを判定し、{"name": "料理名", "calories": 数値, "protein_g": 数値, "note": "根拠を30字以内"} のJSON形式のみ返してください。量が写真から判断できない部分は一般的な1人前として推定し、前置きや解説はJSON以外に一切付けないでください。';
+    const prompt = '写真の食事全体を見て、料理名(複数ある場合は「○○と△△」のようにまとめる)、推定カロリー(kcal、整数)、推定たんぱく質量(g、整数)、推定脂質量(g、整数)、推定炭水化物量(g、整数)、短い根拠メモを判定し、{\"name\": \"料理名\", \"calories\": 数値, \"protein_g\": 数値, \"fat_g\": 数値, \"carbs_g\": 数値, \"note\": \"根拠を30字以内\"} のJSON形式のみ返してください。量が写真から判断できない部分は一般的な1人前として推定し、前置きや解説はJSON以外に一切付けないでください。';
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -610,6 +610,8 @@ async function fetchGeminiFoodRecognition(file) {
       name: parsed.name,
       calories: Math.round(parsed.calories),
       protein: (parsed.protein_g !== undefined && parsed.protein_g !== null) ? Math.round(parsed.protein_g) : null,
+      fat: (parsed.fat_g !== undefined && parsed.fat_g !== null) ? Math.round(parsed.fat_g) : null,
+      carbs: (parsed.carbs_g !== undefined && parsed.carbs_g !== null) ? Math.round(parsed.carbs_g) : null,
       note: parsed.note || ''
     };
   } catch (e) {
@@ -643,7 +645,7 @@ function buildAIContext() {
   });
   lines.push(`対象日の筋トレ(${currentLogWorkouts().length}セット): ${wToday.length ? wToday.join('、') : 'なし'}`);
   const mToday = currentLogMeals();
-  lines.push(`対象日の食事(合計${currentCalorieTotal()}kcal / たんぱく質合計${mToday.reduce((sum, m) => sum + (Number(m.protein) || 0), 0)}g): ${mToday.length ? mToday.map(m => `${m.category}:${m.name}(${m.calories}kcal${m.protein ? `/P${m.protein}g` : ''})`).join('、') : 'なし'}`);
+  lines.push(`対象日の食事(合計${currentCalorieTotal()}kcal / P${mToday.reduce((sum, m) => sum + (Number(m.protein) || 0), 0)}g / F${mToday.reduce((sum, m) => sum + (Number(m.fat) || 0), 0)}g / C${mToday.reduce((sum, m) => sum + (Number(m.carbs) || 0), 0)}g): ${mToday.length ? mToday.map(m => `${m.category}:${m.name}(${m.calories}kcal${m.protein ? `/P${m.protein}g` : ''}${m.fat ? `/F${m.fat}g` : ''}${m.carbs ? `/C${m.carbs}g` : ''})`).join('、') : 'なし'}`);
   const daily = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
@@ -910,12 +912,12 @@ function fileToBase64Raw(file) {
   });
 }
 
-async function addMealRecord(name, calNum, category, proteinG = null) {
+async function addMealRecord(name, calNum, category, proteinG = null, fatG = null, carbsG = null) {
   const target = state.goals.dailyCalorieTarget;
   const beforeTotal = currentCalorieTotal();
   const afterTotal = beforeTotal + calNum;
 
-  state.meals.push({ id: uid(), category, name, calories: calNum, date: activeLogDate, ...((proteinG !== null && proteinG !== '' && !isNaN(Number(proteinG))) ? { protein: Number(proteinG) } : {}) });
+  state.meals.push({ id: uid(), category, name, calories: calNum, date: activeLogDate, ...((proteinG !== null && proteinG !== '' && !isNaN(Number(proteinG))) ? { protein: Number(proteinG) } : {}), ...((fatG !== null && fatG !== '' && !isNaN(Number(fatG))) ? { fat: Number(fatG) } : {}), ...((carbsG !== null && carbsG !== '' && !isNaN(Number(carbsG))) ? { carbs: Number(carbsG) } : {}) });
   saveState(); render(); triggerScreenGlow('meal');
 
   const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
@@ -943,6 +945,8 @@ function renderMeal() {
   const meals = currentLogMeals();
   const total = currentCalorieTotal();
   const proteinTotal = meals.reduce((s, m) => s + (Number(m.protein) || 0), 0);
+  const fatTotal = meals.reduce((s, m) => s + (Number(m.fat) || 0), 0);
+  const carbsTotal = meals.reduce((s, m) => s + (Number(m.carbs) || 0), 0);
   const groups = MEAL_CATEGORIES.map(cat => {
     const items = meals.filter(m => m.category === cat);
     if (items.length === 0) return '';
@@ -950,14 +954,14 @@ function renderMeal() {
       <div class="list-row">
         <span class="val">${escapeHtml(m.name)}</span>
         <span style="display:flex; align-items:center; gap:8px;">
-          <span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / P${m.protein}g` : ''}</span>
+          <span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / P${m.protein}g` : ''}${m.fat ? ` / F${m.fat}g` : ''}${m.carbs ? ` / C${m.carbs}g` : ''}</span>
           <button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button>
         </span>
       </div>`).join('');
     return `<p class="section-title">${cat}</p><div class="list-card">${rows}</div>`;
   }).join('');
 
-  const favoriteChips = state.favoriteMeals.map(f => `<span class="chip" data-favorite-tap="${f.id}">${escapeHtml(f.name)}(${f.calories}kcal${f.protein ? `/P${f.protein}g` : ''})<button type="button" class="chip-remove" data-favorite-remove="${f.id}">&times;</button></span>`).join('');
+  const favoriteChips = state.favoriteMeals.map(f => `<span class="chip" data-favorite-tap="${f.id}">${escapeHtml(f.name)}(${f.calories}kcal${f.protein ? `/P${f.protein}g` : ''}${f.fat ? `/F${f.fat}g` : ''}${f.carbs ? `/C${f.carbs}g` : ''})<button type="button" class="chip-remove" data-favorite-remove="${f.id}">&times;</button></span>`).join('');
 
   return `
     ${renderLastAdvice()}
@@ -983,8 +987,16 @@ function renderMeal() {
       <label>たんぱく質 (g) ※任意・写真解析で自動入力</label>
       <input type="number" id="meal-protein" inputmode="decimal" placeholder="25">
     </div>
+    <div class="field">
+      <label>脂質 (g) ※任意</label>
+      <input type="number" id="meal-fat" inputmode="decimal" placeholder="15">
+    </div>
+    <div class="field">
+      <label>炭水化物 (g) ※任意</label>
+      <input type="number" id="meal-carbs" inputmode="decimal" placeholder="50">
+    </div>
     
-    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー・たんぱく質推測 (Groq)</button>
+    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー・PFC推測 (Groq)</button>
     <button class="primary" id="add-meal-btn">記録を追加</button>
     <button class="secondary" id="save-favorite-btn" style="margin-bottom:12px;">☆ 今の内容を「よく食べるもの」に登録</button>
 
@@ -1004,7 +1016,7 @@ function renderMeal() {
 
     <p class="section-title">${activeLogDate === todayKey() ? '今日' : activeLogDate} の記録</p>
     ${groups || `<div class="empty-hint">この日の記録はまだありません</div>`}
-    <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div>${proteinTotal > 0 ? `<div class="total-row"><span class="label">たんぱく質合計</span><span class="value">${proteinTotal} g</span></div>` : ''}</div>
+    <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div>${(proteinTotal > 0 || fatTotal > 0 || carbsTotal > 0) ? `<div class="total-row"><span class="label">PFC合計</span><span class="value">P${proteinTotal}g / F${fatTotal}g / C${carbsTotal}g</span></div>` : ''}</div>
   `;
 }
 
@@ -1031,7 +1043,7 @@ function renderHistory() {
   let totalMealKcal = 0;
   const mealRows = meals.map(m => {
     totalMealKcal += (Number(m.calories) || 0);
-    return `<div class="list-row"><span class="val">${escapeHtml(m.name)} <span class="sub">${m.category}</span></span><span style="display:flex; align-items:center; gap:8px;"><span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / P${m.protein}g` : ''}</span><button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button></span></div>`;
+    return `<div class="list-row"><span class="val">${escapeHtml(m.name)} <span class="sub">${m.category}</span></span><span style="display:flex; align-items:center; gap:8px;"><span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / P${m.protein}g` : ''}${m.fat ? ` / F${m.fat}g` : ''}${m.carbs ? ` / C${m.carbs}g` : ''}</span><button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button></span></div>`;
   }).join('');
 
   const netKcal = totalMealKcal - totalWorkoutKcal;
@@ -1309,7 +1321,7 @@ function attachEvents() {
       if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       reqMealBtn.textContent = '✨ AIトレーナーが食事を分析中…'; reqMealBtn.disabled = true;
       const todaysMealList = currentLogMeals().map(m => `${m.category}:${m.name}(${m.calories}kcal)`).join('、');
-      const prompt = `次の記録を根拠に、食事アドバイスを日本語で書いてください。\n${buildAIContext()}\n\nルール: 全体で350〜450字に収めること。構成は次の3項目のみ、各項目は2文まで。1. 今日の良い点(数字を根拠に) 2. カロリーとたんぱく質の過不足(記録に無い栄養素は断定せず、料理名からの推定は「推定」と書く) 3. 次の一食の具体案(食材名と量・おおよそのkcalとたんぱく質量)と、目標体重へのペース評価を一言。途中で終わらせず、3.まで必ず書き切ること。Markdown記法(**や#、箇条書きの- )は使わず、見出しは「1. 」のように書くこと。`;
+      const prompt = `次の記録を根拠に、食事アドバイスを日本語で書いてください。\n${buildAIContext()}\n\nルール: 全体で350〜450字に収めること。構成は次の3項目のみ、各項目は2文まで。1. 今日の良い点(数字を根拠に) 2. カロリーとPFC(たんぱく質・脂質・炭水化物)の過不足(記録に無い栄養素は断定せず、料理名からの推定は「推定」と書く) 3. 次の一食の具体案(食材名と量・おおよそのkcalとPFC量)と、目標体重へのペース評価を一言。途中で終わらせず、3.まで必ず書き切ること。Markdown記法(**や#、箇条書きの- )は使わず、見出しは「1. 」のように書くこと。`;
       const aiText = await fetchGroqComment(prompt, { maxTokens: 1200 });
       reqMealBtn.textContent = '✨ 現状からAIに食事のアドバイスをもらう'; reqMealBtn.disabled = false;
       if (aiText) presentAdvice('食事相談', aiText);
@@ -1322,7 +1334,7 @@ function attachEvents() {
     chip.addEventListener('click', (e) => {
       if (e.target.closest('[data-favorite-remove]')) return;
       const fav = state.favoriteMeals.find(f => f.id === chip.dataset.favoriteTap);
-      if (fav) addMealRecord(fav.name, fav.calories, selectedMealCategory, (fav.protein !== undefined && fav.protein !== null) ? fav.protein : null);
+      if (fav) addMealRecord(fav.name, fav.calories, selectedMealCategory, (fav.protein !== undefined && fav.protein !== null) ? fav.protein : null, (fav.fat !== undefined && fav.fat !== null) ? fav.fat : null, (fav.carbs !== undefined && fav.carbs !== null) ? fav.carbs : null);
     });
   });
   document.querySelectorAll('[data-favorite-remove]').forEach(btn => {
@@ -1333,9 +1345,14 @@ function attachEvents() {
     saveFavoriteBtn.addEventListener('click', () => {
       const name = document.getElementById('meal-name').value.trim(); const cal = document.getElementById('meal-calories').value;
       if (!name || cal === '') { alert('食べたものとカロリーを入力してください'); return; }
-      const proteinInput = document.getElementById('meal-protein');
-      const proteinVal = proteinInput ? proteinInput.value : '';
-      state.favoriteMeals.push({ id: uid(), name, calories: Number(cal), ...(proteinVal !== '' && !isNaN(Number(proteinVal)) ? { protein: Number(proteinVal) } : {}) }); saveState(); favListOpen = true; render();
+      const numOrNull = (id) => { const el = document.getElementById(id); if (!el || el.value === '' || isNaN(Number(el.value))) return null; return Number(el.value); };
+      const favData = { calories: Number(cal) };
+      const pVal = numOrNull('meal-protein'); if (pVal !== null) favData.protein = pVal;
+      const fVal = numOrNull('meal-fat'); if (fVal !== null) favData.fat = fVal;
+      const cVal = numOrNull('meal-carbs'); if (cVal !== null) favData.carbs = cVal;
+      const existingFav = state.favoriteMeals.find(fv => fv.name === name);
+      if (existingFav) { Object.assign(existingFav, favData); } else { state.favoriteMeals.push({ id: uid(), name, ...favData }); }
+      saveState(); favListOpen = true; render();
     });
   }
 
@@ -1351,7 +1368,11 @@ function attachEvents() {
       document.getElementById('meal-name').value = result.name; document.getElementById('meal-calories').value = result.calories;
       const proteinInput = document.getElementById('meal-protein');
       if (proteinInput && result.protein !== null && result.protein !== undefined) proteinInput.value = result.protein;
-      if (statusEl) statusEl.textContent = `判定結果を入力しました: ${result.name} (約${result.calories}kcal${result.protein ? ` / たんぱく質約${result.protein}g` : ''})${result.note ? ` ※${result.note}` : ''} ※量は写真からの推定です。記録前に数字を確認してください`;
+      const fatInput = document.getElementById('meal-fat');
+      if (fatInput && result.fat !== null && result.fat !== undefined) fatInput.value = result.fat;
+      const carbsInput = document.getElementById('meal-carbs');
+      if (carbsInput && result.carbs !== null && result.carbs !== undefined) carbsInput.value = result.carbs;
+      if (statusEl) statusEl.textContent = `判定結果を入力しました: ${result.name} (約${result.calories}kcal${result.protein ? ` / たんぱく質約${result.protein}g` : ''}${result.fat ? ` / 脂質約${result.fat}g` : ''}${result.carbs ? ` / 炭水化物約${result.carbs}g` : ''})${result.note ? ` ※${result.note}` : ''} ※量は写真からの推定です。記録前に数字を確認してください`;
     });
   }
 
@@ -1365,7 +1386,9 @@ function attachEvents() {
       const name = document.getElementById('meal-name').value.trim(); const cal = document.getElementById('meal-calories').value;
       if (!name || cal === '') { alert('食べたものとカロリーを入力してください'); return; }
       const proteinVal = document.getElementById('meal-protein') ? document.getElementById('meal-protein').value : '';
-      addMealRecord(name, Number(cal), document.getElementById('meal-category-select').value, proteinVal === '' ? null : Number(proteinVal));
+      const fatVal = document.getElementById('meal-fat') ? document.getElementById('meal-fat').value : '';
+      const carbsVal = document.getElementById('meal-carbs') ? document.getElementById('meal-carbs').value : '';
+      addMealRecord(name, Number(cal), document.getElementById('meal-category-select').value, proteinVal === '' ? null : Number(proteinVal), fatVal === '' ? null : Number(fatVal), carbsVal === '' ? null : Number(carbsVal));
     });
   }
   document.querySelectorAll('[data-delete-meal]').forEach(btn => {
@@ -1490,7 +1513,7 @@ function attachEvents() {
       if (!name) { alert('先に食べたものを入力してください'); return; }
       if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
       const prevText = aiGuessBtn.textContent; aiGuessBtn.textContent = '推測中...'; aiGuessBtn.disabled = true;
-      const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)とたんぱく質量(g、整数)を推測し、{"calories": 数値, "protein_g": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。`;
+      const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)とたんぱく質量(g、整数)、脂質量(g、整数)、炭水化物量(g、整数)を推測し、{\"calories\": 数値, \"protein_g\": 数値, \"fat_g\": 数値, \"carbs_g\": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。`;
       const resText = await fetchGroqComment(prompt, { jsonOnly: true });
       aiGuessBtn.textContent = prevText; aiGuessBtn.disabled = false;
       try {
@@ -1498,6 +1521,10 @@ function attachEvents() {
         document.getElementById('meal-calories').value = parsed.calories;
         const proteinInput = document.getElementById('meal-protein');
         if (proteinInput && parsed.protein_g !== undefined && parsed.protein_g !== null && !isNaN(Number(parsed.protein_g))) proteinInput.value = Math.round(Number(parsed.protein_g));
+        const fatInput = document.getElementById('meal-fat');
+        if (fatInput && parsed.fat_g !== undefined && parsed.fat_g !== null && !isNaN(Number(parsed.fat_g))) fatInput.value = Math.round(Number(parsed.fat_g));
+        const carbsInput = document.getElementById('meal-carbs');
+        if (carbsInput && parsed.carbs_g !== undefined && parsed.carbs_g !== null && !isNaN(Number(parsed.carbs_g))) carbsInput.value = Math.round(Number(parsed.carbs_g));
       } catch (e) { alert('推測に失敗しました。手動で入力してください。'); }
     });
   }
@@ -1506,11 +1533,19 @@ function attachEvents() {
   if (mealNameInput) {
     mealNameInput.addEventListener('change', () => {
       const name = mealNameInput.value.trim();
-      const pastMeal = [...state.meals].reverse().find(m => m.name === name);
+      const sameName = [...state.meals].reverse().filter(m => m.name === name);
+      const pastMeal = sameName[0];
       const calInput = document.getElementById('meal-calories');
       if (pastMeal && !calInput.value) { calInput.value = pastMeal.calories; }
-      const proteinInput = document.getElementById('meal-protein');
-      if (pastMeal && proteinInput && !proteinInput.value && pastMeal.protein !== undefined && pastMeal.protein !== null) { proteinInput.value = pastMeal.protein; }
+      const fillLatest = (inputId, key) => {
+        const input = document.getElementById(inputId);
+        if (!input || input.value) return;
+        const rec = sameName.find(m => m[key] !== undefined && m[key] !== null);
+        if (rec) input.value = rec[key];
+      };
+      fillLatest('meal-protein', 'protein');
+      fillLatest('meal-fat', 'fat');
+      fillLatest('meal-carbs', 'carbs');
     });
   }
 }
