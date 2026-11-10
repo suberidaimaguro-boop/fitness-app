@@ -557,13 +557,14 @@ async function fetchGroqComment(prompt, opts = {}) {
             { role: 'user', content: prompt }
           ],
           temperature: 0.7,
-          max_tokens: opts.maxTokens || (opts.jsonOnly ? 200 : 900)
+          max_tokens: opts.maxTokens || (opts.jsonOnly ? 200 : 900),
+          ...(opts.jsonOnly ? { response_format: { type: 'json_object' } } : {})
         })
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         lastError = `${res.status}: ${err.error?.message || '不明なエラー'}`;
-        if (res.status === 404 || res.status === 400) continue;
+        if (res.status === 404 || res.status === 400 || res.status === 429 || res.status === 503) continue;
         alert(`【Groqエラー】\nコード: ${res.status}\n内容: ${err.error?.message || '不明なエラー'}`);
         return null;
       }
@@ -579,94 +580,118 @@ async function fetchGroqComment(prompt, opts = {}) {
   return null;
 }
 
+
+const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash-lite'];
+async function callGeminiGenerate(parts, generationConfig = {}) {
+  const apiKey = state.settings.geminiApiKey;
+  if (!apiKey) return { error: 'no_key' };
+  let lastDetail = '';
+  for (const model of GEMINI_MODELS) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts }], generationConfig })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        lastDetail = `${res.status}: ${err.error?.message || '不明なエラー'}`;
+        if (res.status === 429 || res.status === 404 || res.status === 503 || res.status === 500 || res.status === 400) continue;
+        return { error: 'failed', detail: lastDetail };
+      }
+      const data = await res.json();
+      const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
+      if (text) return { text, model };
+      lastDetail = data?.promptFeedback?.blockReason ? `AIが応答をブロックしました (${data.promptFeedback.blockReason})` : 'AIから本文が返りませんでした';
+    } catch (e) {
+      lastDetail = e.message;
+    }
+  }
+  return { error: 'failed', detail: lastDetail };
+}
+function parseFoodResponse(text) {
+  if (!text) return null;
+  const m = String(text).match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let obj;
+  try { obj = JSON.parse(m[0]); } catch (e) { return null; }
+  const calories = toGuessNumber(obj.calories !== undefined ? obj.calories : obj.kcal);
+  if (calories === null) return null;
+  const num = v => { const n = toGuessNumber(v); return n === null ? null : Math.round(n); };
+  return {
+    name: typeof obj.name === 'string' ? obj.name : '',
+    calories: Math.round(calories),
+    protein: num(obj.protein_g),
+    fat: num(obj.fat_g),
+    carbs: num(obj.carbs_g),
+    note: obj.note || ''
+  };
+}
+
 async function fetchGeminiFoodRecognition(file) {
   const apiKey = state.settings.geminiApiKey;
   if (!apiKey) return { error: 'no_key' };
+  let base64Data;
+  let mimeType = 'image/jpeg';
   try {
-    let base64Data;
-    let mimeType = 'image/jpeg';
+    const dataUrl = await resizeImageFile(file, 1024, 0.82);
+    base64Data = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  } catch (convErr) {
     try {
-      const dataUrl = await resizeImageFile(file, 1024, 0.82);
-      base64Data = dataUrl.slice(dataUrl.indexOf(',') + 1);
-    } catch (convErr) {
       base64Data = await fileToBase64Raw(file);
       mimeType = file.type || 'image/jpeg';
+    } catch (e) {
+      return { error: 'exception', detail: '画像の読み込みに失敗しました: ' + e.message };
     }
-    const prompt = '写真の食事全体を見て、料理名(複数ある場合は「○○と△△」のようにまとめる)、推定カロリー(kcal、整数)、推定たんぱく質量(g、整数)、推定脂質量(g、整数)、推定炭水化物量(g、整数)、短い根拠メモを判定し、{\"name\": \"料理名\", \"calories\": 数値, \"protein_g\": 数値, \"fat_g\": 数値, \"carbs_g\": 数値, \"note\": \"根拠を30字以内\"} のJSON形式のみ返してください。量が写真から判断できない部分は一般的な1人前として推定し、前置きや解説はJSON以外に一切付けないでください。';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: base64Data } }, { text: prompt }] }],
-        generationConfig: { temperature: 0.2, response_mime_type: 'application/json' }
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return { error: 'failed', detail: `${res.status}: ${err.error?.message || '不明なエラー'}` };
-    }
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
-    if (!text) return { error: 'no_text', detail: 'AIから本文が返りませんでした' };
-    const cleaned = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
-    return {
-      name: parsed.name,
-      calories: Math.round(parsed.calories),
-      protein: (parsed.protein_g !== undefined && parsed.protein_g !== null) ? Math.round(parsed.protein_g) : null,
-      fat: (parsed.fat_g !== undefined && parsed.fat_g !== null) ? Math.round(parsed.fat_g) : null,
-      carbs: (parsed.carbs_g !== undefined && parsed.carbs_g !== null) ? Math.round(parsed.carbs_g) : null,
-      note: parsed.note || ''
-    };
-  } catch (e) {
-    return { error: 'exception', detail: e.message };
   }
+  const prompt = '写真の食事全体を見て、料理名(複数ある場合は「○○と△△」のようにまとめる)、推定カロリー(kcal、整数)、推定たんぱく質量(g、整数)、推定脂質量(g、整数)、推定炭水化物量(g、整数)、短い根拠メモを判定し、{\"name\": \"料理名\", \"calories\": 数値, \"protein_g\": 数値, \"fat_g\": 数値, \"carbs_g\": 数値, \"note\": \"根拠を30字以内\"} のJSON形式のみ返してください。量が写真から判断できない部分は一般的な1人前として推定し、前置きや解説はJSON以外に一切付けないでください。数値は単位や「約」を付けず、数字だけで返してください。';
+  const result = await callGeminiGenerate(
+    [{ inline_data: { mime_type: mimeType, data: base64Data } }, { text: prompt }],
+    { temperature: 0.2, response_mime_type: 'application/json' }
+  );
+  if (result.error) return result;
+  const parsed = parseFoodResponse(result.text);
+  if (!parsed) return { error: 'parse', detail: `AIの応答を読み取れませんでした: ${String(result.text).slice(0, 100)}` };
+  return parsed;
 }
 
 
 async function fetchGeminiLabelRecognition(file) {
   const apiKey = state.settings.geminiApiKey;
   if (!apiKey) return { error: 'no_key' };
+  let base64Data;
+  let mimeType = 'image/jpeg';
   try {
-    let base64Data;
-    let mimeType = 'image/jpeg';
+    const dataUrl = await resizeImageFile(file, 1400, 0.85);
+    base64Data = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  } catch (convErr) {
     try {
-      const dataUrl = await resizeImageFile(file, 1400, 0.85);
-      base64Data = dataUrl.slice(dataUrl.indexOf(',') + 1);
-    } catch (convErr) {
       base64Data = await fileToBase64Raw(file);
       mimeType = file.type || 'image/jpeg';
+    } catch (e) {
+      return { error: 'exception', detail: '画像の読み込みに失敗しました: ' + e.message };
     }
-    const prompt = '栄養成分表示のラベルを読み取り、商品名(写っていれば)、エネルギー(kcal)、たんぱく質(g)、脂質(g)、炭水化物(g)を抽出してください。値が「1個・1食・1包装あたり」で書かれている場合はその値を、「100gあたり」しか無い場合は100gあたりの値を返し、basis に \"per_item\" か \"per_100g\" を入れてください。{\"name\": \"商品名または空文字\", \"calories\": 数値またはnull, \"protein_g\": 数値またはnull, \"fat_g\": 数値またはnull, \"carbs_g\": 数値またはnull, \"basis\": \"per_item\", \"note\": \"読み取り根拠を30字以内\"} のJSON形式のみ返してください。前置きや解説はJSON以外に一切付けないでください。';
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: base64Data } }, { text: prompt }] }],
-        generationConfig: { temperature: 0.1, response_mime_type: 'application/json' }
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return { error: 'failed', detail: `${res.status}: ${err.error?.message || '不明なエラー'}` };
-    }
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
-    if (!text) return { error: 'no_text', detail: 'AIから本文が返りませんでした' };
-    const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
-    const num = v => (v === null || v === undefined || isNaN(Number(v))) ? null : Math.round(Number(v) * 10) / 10;
-    return {
-      name: parsed.name || '',
-      calories: num(parsed.calories) !== null ? Math.round(Number(parsed.calories)) : null,
-      protein: num(parsed.protein_g),
-      fat: num(parsed.fat_g),
-      carbs: num(parsed.carbs_g),
-      basis: parsed.basis || 'per_item',
-      note: parsed.note || ''
-    };
-  } catch (e) {
-    return { error: 'exception', detail: e.message };
   }
+  const prompt = '栄養成分表示のラベルを読み取り、商品名(写っていれば)、エネルギー(kcal)、たんぱく質(g)、脂質(g)、炭水化物(g)を抽出してください。値が「1個・1食・1包装あたり」で書かれている場合はその値を、「100gあたり」しか無い場合は100gあたりの値を返し、basis に \"per_item\" か \"per_100g\" を入れてください。{\"name\": \"商品名または空文字\", \"calories\": 数値またはnull, \"protein_g\": 数値またはnull, \"fat_g\": 数値またはnull, \"carbs_g\": 数値またはnull, \"basis\": \"per_item\", \"note\": \"読み取り根拠を30字以内\"} のJSON形式のみ返してください。前置きや解説はJSON以外に一切付けないでください。';
+  const result = await callGeminiGenerate(
+    [{ inline_data: { mime_type: mimeType, data: base64Data } }, { text: prompt }],
+    { temperature: 0.1, response_mime_type: 'application/json' }
+  );
+  if (result.error) return result;
+  const m = String(result.text).match(/\{[\s\S]*\}/);
+  if (!m) return { error: 'parse', detail: `AIの応答を読み取れませんでした: ${String(result.text).slice(0, 100)}` };
+  let parsed;
+  try { parsed = JSON.parse(m[0]); } catch (e) { return { error: 'parse', detail: `AIの応答を読み取れませんでした: ${String(result.text).slice(0, 100)}` }; }
+  const num = v => { const n = toGuessNumber(v); return n === null ? null : Math.round(n * 10) / 10; };
+  return {
+    name: parsed.name || '',
+    calories: num(parsed.calories) !== null ? Math.round(num(parsed.calories)) : null,
+    protein: num(parsed.protein_g),
+    fat: num(parsed.fat_g),
+    carbs: num(parsed.carbs_g),
+    basis: parsed.basis || 'per_item',
+    note: parsed.note || ''
+  };
 }
 
 
@@ -702,25 +727,10 @@ function parseGuessResponse(text) {
   };
 }
 async function fetchGeminiTextGuess(name) {
-  const apiKey = state.settings.geminiApiKey;
-  if (!apiKey) return null;
-  try {
-    const prompt = `料理名「${name}」について、一般的な1人前の栄養成分を推測してください。丼もの・定食はご飯を含む1人前としてください。値は必ず単一の数値で答え、単位・「約」・幅(〜)は付けないでください。{"calories": 650, "protein_g": 38, "fat_g": 12, "carbs_g": 85} のように、キーと数値だけのJSONを返してください。説明文は一切付けないでください。`;
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.2, response_mime_type: 'application/json' }
-      })
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
-    return text || null;
-  } catch (e) {
-    return null;
-  }
+  if (!state.settings.geminiApiKey) return null;
+  const prompt = `料理名「${name}」について、一般的な1人前の栄養成分を推測してください。丼もの・定食はご飯を含む1人前としてください。値は必ず単一の数値で答え、単位・「約」・幅(〜)は付けないでください。{"calories": 650, "protein_g": 38, "fat_g": 12, "carbs_g": 85} のように、キーと数値だけのJSONを返してください。説明文は一切付けないでください。`;
+  const result = await callGeminiGenerate([{ text: prompt }], { temperature: 0.2, response_mime_type: 'application/json' });
+  return result.error ? null : result.text;
 }
 
 function personaInstruction() {
@@ -1689,6 +1699,7 @@ function attachEvents() {
   if (mealPhotoInput) {
     mealPhotoInput.addEventListener('change', async () => {
       const file = mealPhotoInput.files && mealPhotoInput.files[0]; if (!file) return;
+      mealPhotoInput.value = '';
       const statusEl = document.getElementById('meal-photo-status');
       if (!state.settings.geminiApiKey) { if (statusEl) statusEl.textContent = '設定画面でGemini APIキーを登録してください'; return; }
       if (statusEl) statusEl.textContent = 'AIが写真から料理とカロリーを解析中…';
@@ -1709,6 +1720,7 @@ function attachEvents() {
   if (labelPhotoInput) {
     labelPhotoInput.addEventListener('change', async () => {
       const file = labelPhotoInput.files && labelPhotoInput.files[0]; if (!file) return;
+      labelPhotoInput.value = '';
       const statusEl = document.getElementById('meal-label-photo-status');
       if (!state.settings.geminiApiKey) { if (statusEl) statusEl.textContent = '設定画面でGemini APIキーを登録してください'; return; }
       if (statusEl) statusEl.textContent = 'AIが成分表示を読み取り中…';
