@@ -21,7 +21,7 @@ function defaultState() {
     ],
     workoutLogs: [],
     meals: [],
-    goals: { dailySetTarget: 4, dailyCalorieTarget: 2000 },
+    goals: { dailySetTarget: 4, dailyCalorieTarget: 2000, dailyProteinTarget: 100 },
     settings: {
       geminiApiKey: '',
       groqApiKey: '',
@@ -39,7 +39,8 @@ function defaultState() {
     },
     favoriteMeals: [],
     haveToList: { date: todayKey(), items: [] },
-    dailyAdvices: []
+    dailyAdvices: [],
+    weightLogs: []
   };
 }
 
@@ -64,6 +65,8 @@ function loadState() {
         parsed.haveToList = { date: todayKey(), items: [] };
       }
       if (!parsed.dailyAdvices) parsed.dailyAdvices = [];
+      if (!parsed.weightLogs) parsed.weightLogs = [];
+      if (parsed.goals && parsed.goals.dailyProteinTarget === undefined) parsed.goals.dailyProteinTarget = 100;
       return parsed;
     }
   } catch (e) {
@@ -91,6 +94,7 @@ function todayKey() {
 
 let activeLogDate = todayKey();
 let favListOpen = false;
+let photoSectionOpen = false;
 let exerciseListOpen = false;
 let themeAccentOpen = false;
 let themeBgOpen = false;
@@ -619,6 +623,52 @@ async function fetchGeminiFoodRecognition(file) {
   }
 }
 
+
+async function fetchGeminiLabelRecognition(file) {
+  const apiKey = state.settings.geminiApiKey;
+  if (!apiKey) return { error: 'no_key' };
+  try {
+    let base64Data;
+    let mimeType = 'image/jpeg';
+    try {
+      const dataUrl = await resizeImageFile(file, 1400, 0.85);
+      base64Data = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    } catch (convErr) {
+      base64Data = await fileToBase64Raw(file);
+      mimeType = file.type || 'image/jpeg';
+    }
+    const prompt = '栄養成分表示のラベルを読み取り、商品名(写っていれば)、エネルギー(kcal)、たんぱく質(g)、脂質(g)、炭水化物(g)を抽出してください。値が「1個・1食・1包装あたり」で書かれている場合はその値を、「100gあたり」しか無い場合は100gあたりの値を返し、basis に \"per_item\" か \"per_100g\" を入れてください。{\"name\": \"商品名または空文字\", \"calories\": 数値またはnull, \"protein_g\": 数値またはnull, \"fat_g\": 数値またはnull, \"carbs_g\": 数値またはnull, \"basis\": \"per_item\", \"note\": \"読み取り根拠を30字以内\"} のJSON形式のみ返してください。前置きや解説はJSON以外に一切付けないでください。';
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ inline_data: { mime_type: mimeType, data: base64Data } }, { text: prompt }] }],
+        generationConfig: { temperature: 0.1, response_mime_type: 'application/json' }
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { error: 'failed', detail: `${res.status}: ${err.error?.message || '不明なエラー'}` };
+    }
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
+    if (!text) return { error: 'no_text', detail: 'AIから本文が返りませんでした' };
+    const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+    const num = v => (v === null || v === undefined || isNaN(Number(v))) ? null : Math.round(Number(v) * 10) / 10;
+    return {
+      name: parsed.name || '',
+      calories: num(parsed.calories) !== null ? Math.round(Number(parsed.calories)) : null,
+      protein: num(parsed.protein_g),
+      fat: num(parsed.fat_g),
+      carbs: num(parsed.carbs_g),
+      basis: parsed.basis || 'per_item',
+      note: parsed.note || ''
+    };
+  } catch (e) {
+    return { error: 'exception', detail: e.message };
+  }
+}
+
 function personaInstruction() {
   const name = (state.settings.userName || '').trim();
   const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
@@ -634,7 +684,9 @@ function buildAIContext() {
   const bmi = calculateBMI(s.bodyHeightCm, s.bodyWeightKg);
   const lines = [];
   lines.push(`プロフィール: 身長${s.bodyHeightCm ?? '未設定'}cm / 体重${s.bodyWeightKg ?? '未設定'}kg${bmi ? ` / BMI ${bmi.val}` : ''}${s.goalWeightKg ? ` / 目標体重 ${s.goalWeightKg}kg` : ''}`);
-  lines.push(`目標: 1日 ${state.goals.dailySetTarget}セット / ${state.goals.dailyCalorieTarget}kcalまで`);
+  lines.push(`目標: 1日 ${state.goals.dailySetTarget}セット / ${state.goals.dailyCalorieTarget}kcalまで / たんぱく質 ${state.goals.dailyProteinTarget || 100}g`);
+  const wtInfo = weightTrendInfo();
+  if (wtInfo) lines.push(`体重: 最新 ${wtInfo.latest.weight}kg (${wtInfo.latest.date}) / 7日平均 ${wtInfo.avg7 ? wtInfo.avg7.toFixed(1) : '-'}kg${wtInfo.goal ? ` / 目標まで ${Math.max(0, ((wtInfo.avg7 || Number(wtInfo.latest.weight)) - wtInfo.goal)).toFixed(1)}kg` : ''}${wtInfo.weeklyRate !== null ? ` / 直近の変化 約${wtInfo.weeklyRate.toFixed(2)}kg/週` : ''}`);
   const wToday = currentLogWorkouts().map(l => {
     const e2 = state.exercises.find(e => e.id === l.exerciseId);
     const parts = [];
@@ -687,10 +739,186 @@ function renderLastAdvice() {
   `;
 }
 
+
+/* ===== v32: 体重推移・今日の残り・夕方アラート ===== */
+function sortedWeightLogs() {
+  return [...(state.weightLogs || [])].sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+function dateKeyOf(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function weightAvgUpTo(endKey, days) {
+  const logs = sortedWeightLogs();
+  if (!logs.length) return null;
+  const end = new Date(endKey + 'T00:00:00');
+  const start = new Date(end); start.setDate(start.getDate() - (days - 1));
+  const inRange = logs.filter(l => { const d = new Date(l.date + 'T00:00:00'); return d >= start && d <= end; });
+  if (!inRange.length) return null;
+  return inRange.reduce((s, l) => s + Number(l.weight), 0) / inRange.length;
+}
+function weightTrendInfo() {
+  const logs = sortedWeightLogs();
+  if (!logs.length) return null;
+  const latest = logs[logs.length - 1];
+  const avg7 = weightAvgUpTo(latest.date, 7);
+  const prevEnd = new Date(latest.date + 'T00:00:00'); prevEnd.setDate(prevEnd.getDate() - 7);
+  const avgPrev7 = weightAvgUpTo(dateKeyOf(prevEnd), 7);
+  const weeklyRate = (avg7 !== null && avgPrev7 !== null) ? (avg7 - avgPrev7) : null;
+  const goal = state.settings.goalWeightKg;
+  let etaText = '';
+  if (goal) {
+    const baseVal = avg7 !== null ? avg7 : Number(latest.weight);
+    const remain = baseVal - goal;
+    if (remain <= 0) etaText = '目標体重に到達しています。この調子でキープしましょう。';
+    else if (weeklyRate !== null && weeklyRate < -0.05) {
+      const eta = new Date(); eta.setDate(eta.getDate() + Math.round((remain / Math.abs(weeklyRate)) * 7));
+      etaText = `今のペース (週 ${weeklyRate.toFixed(2)}kg) なら、到達目安は ${eta.getMonth() + 1}月${eta.getDate()}日頃です`;
+    } else {
+      etaText = 'ペース予測には、2週間分くらいの記録が貯まるか、減少ペースが出てくる必要があります';
+    }
+  }
+  return { latest, avg7, weeklyRate, goal, etaText };
+}
+function renderWeightCard() {
+  const logs = sortedWeightLogs();
+  const info = weightTrendInfo();
+  const todayLog = logs.find(l => l.date === todayKey());
+  const inputVal = todayLog ? todayLog.weight : (info ? info.latest.weight : (state.settings.bodyWeightKg ?? ''));
+  let chartHtml = '';
+  if (logs.length >= 2) {
+    const pts = logs.slice(-30);
+    const vals = pts.map(p => Number(p.weight));
+    const avgs = pts.map(p => weightAvgUpTo(p.date, 7));
+    let min = Math.min(...vals); let max = Math.max(...vals);
+    if (info && info.goal) { min = Math.min(min, info.goal); max = Math.max(max, info.goal); }
+    const padV = Math.max(0.5, (max - min) * 0.2); min -= padV; max += padV;
+    const W = 320, H = 110, PX = 8, PY = 12;
+    const x = i => PX + (W - PX * 2) * (i / (pts.length - 1));
+    const y = v => PY + (H - PY * 2) * (1 - (v - min) / (max - min));
+    const rawLine = pts.map((p, i) => `${x(i).toFixed(1)},${y(Number(p.weight)).toFixed(1)}`).join(' ');
+    const avgLine = pts.map((p, i) => avgs[i] ? `${x(i).toFixed(1)},${y(avgs[i]).toFixed(1)}` : null).filter(Boolean).join(' ');
+    const goalLine = (info && info.goal) ? `<line x1="${PX}" y1="${y(info.goal).toFixed(1)}" x2="${W - PX}" y2="${y(info.goal).toFixed(1)}" stroke="#06d6a0" stroke-width="1" stroke-dasharray="4 3"/><text x="${W - PX}" y="${(y(info.goal) - 3).toFixed(1)}" text-anchor="end" font-size="9" fill="#06d6a0">目標 ${info.goal}kg</text>` : '';
+    chartHtml = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:auto; display:block; margin-top:8px;">${goalLine}<polyline points="${rawLine}" fill="none" stroke="var(--text-muted)" stroke-width="1.5"/>${avgLine ? `<polyline points="${avgLine}" fill="none" stroke="var(--gold)" stroke-width="2.5"/>` : ''}${pts.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(Number(p.weight)).toFixed(1)}" r="2.5" fill="var(--text-secondary)"/>`).join('')}</svg><div style="display:flex; gap:14px; font-size:11px; color:var(--text-secondary); margin-top:2px;"><span>― 毎日の体重</span><span style="color:var(--gold);">― 7日平均</span></div>`;
+  }
+  const recent = [...logs].reverse().slice(0, 5).map(l => `
+    <div class="list-row" style="padding:8px 0;">
+      <span class="sub">${l.date}</span><span class="val">${l.weight} kg</span>
+      <button type="button" class="delete-btn" data-delete-weight="${l.id}">${TRASH_ICON_SVG}</button>
+    </div>`).join('');
+  const summary = info ? `
+    <div style="font-size:13px; line-height:1.7;">
+      最新: <strong>${info.latest.weight}kg</strong> <span class="sub">(${info.latest.date})</span>${info.avg7 ? ` / 7日平均: <strong>${info.avg7.toFixed(1)}kg</strong>` : ''}<br>
+      ${info.goal ? `目標 ${info.goal}kg まで あと <strong>${Math.max(0, ((info.avg7 || Number(info.latest.weight)) - info.goal)).toFixed(1)}kg</strong><br>` : '<span class="sub">設定で目標体重を入れると、残りと到達予測が出ます</span><br>'}
+      ${info.etaText ? `<span class="sub">${escapeHtml(info.etaText)}</span>` : ''}
+    </div>` : `<div class="empty-hint">まだ体重記録がありません。朝の体重を入れてみてください</div>`;
+  return `
+    <p class="section-title">体重の推移</p>
+    <div class="list-card" style="padding:14px 16px; margin-bottom:12px;">
+      ${summary}
+      ${chartHtml}
+      <div class="row-2" style="margin-top:12px;">
+        <input type="number" id="input-weight-today" inputmode="decimal" placeholder="今日の体重 (kg)" value="${inputVal}">
+        <button type="button" class="secondary" id="add-weight-btn">${todayLog ? '今日の体重を更新' : '体重を記録'}</button>
+      </div>
+      ${recent ? `<div style="margin-top:8px;">${recent}</div>` : ''}
+    </div>
+  `;
+}
+function todaysPFC() {
+  const meals = todaysMeals();
+  return {
+    kcal: meals.reduce((s, m) => s + (Number(m.calories) || 0), 0),
+    protein: meals.reduce((s, m) => s + (Number(m.protein) || 0), 0),
+    fat: meals.reduce((s, m) => s + (Number(m.fat) || 0), 0),
+    carbs: meals.reduce((s, m) => s + (Number(m.carbs) || 0), 0)
+  };
+}
+function renderRemainingCard() {
+  const t = todaysPFC();
+  const calTarget = state.goals.dailyCalorieTarget;
+  const pTarget = state.goals.dailyProteinTarget || 100;
+  const calRemain = calTarget - t.kcal;
+  const pRemain = pTarget - t.protein;
+  return `
+    <p class="section-title">今日の残り</p>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <p class="label"><i class="ti ti-flame"></i>カロリー</p>
+        <p class="value gold">${calRemain >= 0 ? `あと ${calRemain.toLocaleString()}` : `${Math.abs(calRemain).toLocaleString()} 超過`} <span class="unit">kcal</span></p>
+        <p class="sub" style="margin:4px 0 0;">現在 ${t.kcal.toLocaleString()} / ${calTarget.toLocaleString()} kcal</p>
+      </div>
+      <div class="stat-card">
+        <p class="label"><i class="ti ti-egg"></i>たんぱく質</p>
+        <p class="value gold">${pRemain > 0 ? `あと ${pRemain}` : '目標達成'} <span class="unit">g</span></p>
+        <p class="sub" style="margin:4px 0 0;">現在 ${t.protein} / ${pTarget} g (F${t.fat}g / C${t.carbs}g)</p>
+      </div>
+    </div>
+  `;
+}
+function renderRemainingStrip() {
+  const t = todaysPFC();
+  const calRemain = state.goals.dailyCalorieTarget - t.kcal;
+  const pRemain = (state.goals.dailyProteinTarget || 100) - t.protein;
+  return `<div class="list-card" style="padding:10px 14px; margin-bottom:12px; font-size:13px;">今日の残り: <strong style="color:var(--gold);">${calRemain >= 0 ? `あと ${calRemain.toLocaleString()}kcal` : `${Math.abs(calRemain).toLocaleString()}kcal超過`}</strong> / たんぱく質 <strong style="color:var(--gold);">${pRemain > 0 ? `あと ${pRemain}g` : '目標達成'}</strong></div>`;
+}
+function eveningShortfall() {
+  if (new Date().getHours() < 17) return null;
+  const meals = todaysMeals();
+  if (!meals.length) return null;
+  const pTotal = meals.reduce((s, m) => s + (Number(m.protein) || 0), 0);
+  const pTarget = state.goals.dailyProteinTarget || 100;
+  const remain = pTarget - pTotal;
+  if (remain < 20) return null;
+  return { pTotal, pTarget, remain };
+}
+function eveningSuggestions(remain) {
+  const foods = [
+    { name: 'サラダチキン', p: 26 },
+    { name: 'ザバス プロテイン', p: 20 },
+    { name: 'ツナ缶', p: 12 },
+    { name: 'ギリシャヨーグルト', p: 10 },
+    { name: 'ゆで卵', p: 6 }
+  ];
+  const picked = [];
+  let rest = remain;
+  for (const f of foods) {
+    if (rest <= 0 || picked.length >= 3) break;
+    picked.push(`${f.name}(${f.p}g)`);
+    rest -= f.p;
+  }
+  return picked.join(' と ');
+}
+function renderEveningCard() {
+  const s = eveningShortfall();
+  if (!s) return '';
+  return `
+    <div class="advice-card" style="margin-bottom:12px;">
+      <i class="ti ti-moon"></i>
+      <div>
+        <div style="font-weight:600; margin-bottom:2px;">夕方チェック: たんぱく質があと ${s.remain}g</div>
+        <div>記録では今日 ${s.pTotal}g / 目標 ${s.pTarget}g です。${escapeHtml(eveningSuggestions(s.remain))} で埋められます。</div>
+      </div>
+    </div>
+  `;
+}
+let eveningAlertShown = false;
+function checkEveningAlert() {
+  if (eveningAlertShown) return;
+  let last = null;
+  try { last = localStorage.getItem('fitnessEveningAlertDate'); } catch (e) {}
+  if (last === todayKey()) { eveningAlertShown = true; return; }
+  const s = eveningShortfall();
+  if (!s) return;
+  eveningAlertShown = true;
+  try { localStorage.setItem('fitnessEveningAlertDate', todayKey()); } catch (e) {}
+  showMascot('dismay', `夕方チェックだぞ。今日のたんぱく質は記録では${s.pTotal}gで、目標${s.pTarget}gまであと${s.remain}g足りないぞ。${eveningSuggestions(s.remain)}で埋められるぞ!`, true, '夕方チェック');
+}
+
 /* ===== 描画処理 ===== */
 function setTab(tab) {
   currentTab = tab;
   render();
+  if (tab === 'home') checkEveningAlert();
 }
 
 function renderHome() {
@@ -750,6 +978,9 @@ function renderHome() {
       <span class="label" style="display:flex;align-items:center;gap:6px;margin:0;"><i class="ti ti-flame-filled" style="color:var(--gold);"></i>連続記録</span>
       <span class="value gold" style="font-size:20px;">${streak}日</span>
     </div>
+    ${renderRemainingCard()}
+    ${renderEveningCard()}
+    ${renderWeightCard()}
 
     <div class="haveto-wrap">
       <p class="section-title">今日の Have To リスト</p>
@@ -969,8 +1200,8 @@ function renderMeal() {
       <label>記録する日付</label>
       <input type="date" id="active-log-date-meal" value="${activeLogDate}">
     </div>
+    ${activeLogDate === todayKey() ? renderRemainingStrip() : ''}
     <div class="field"><label>区分</label><select id="meal-category-select">${MEAL_CATEGORIES.map(c => `<option value="${c}" ${c === selectedMealCategory ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
-    
     <div class="field">
       <label>食べたもの</label>
       <input type="text" id="meal-name" list="meal-history-list" placeholder="鶏むね肉のサラダ">
@@ -978,45 +1209,46 @@ function renderMeal() {
         ${[...new Set(state.meals.map(m => m.name))].map(n => `<option value="${escapeHtml(n)}"></option>`).join('')}
       </datalist>
     </div>
-    
-    <div class="field">
-      <label>カロリー (kcal)</label>
-      <input type="number" id="meal-calories" inputmode="numeric" placeholder="350">
+    <div class="row-2">
+      <div class="field"><label>カロリー (kcal)</label><input type="number" id="meal-calories" inputmode="numeric" placeholder="350"></div>
+      <div class="field"><label>たんぱく質 (g)</label><input type="number" id="meal-protein" inputmode="decimal" placeholder="25"></div>
     </div>
-    <div class="field">
-      <label>たんぱく質 (g) ※任意・写真解析で自動入力</label>
-      <input type="number" id="meal-protein" inputmode="decimal" placeholder="25">
+    <div class="row-2">
+      <div class="field"><label>脂質 (g)</label><input type="number" id="meal-fat" inputmode="decimal" placeholder="15"></div>
+      <div class="field"><label>炭水化物 (g)</label><input type="number" id="meal-carbs" inputmode="decimal" placeholder="50"></div>
     </div>
-    <div class="field">
-      <label>脂質 (g) ※任意</label>
-      <input type="number" id="meal-fat" inputmode="decimal" placeholder="15">
-    </div>
-    <div class="field">
-      <label>炭水化物 (g) ※任意</label>
-      <input type="number" id="meal-carbs" inputmode="decimal" placeholder="50">
-    </div>
-    
     <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー・PFC推測 (Groq)</button>
     <button class="primary" id="add-meal-btn">記録を追加</button>
     <button class="secondary" id="save-favorite-btn" style="margin-bottom:12px;">☆ 今の内容を「よく食べるもの」に登録</button>
 
-    <button type="button" class="accordion-toggle" id="fav-toggle-btn">
+    <p class="section-title">${activeLogDate === todayKey() ? '今日' : activeLogDate} の記録</p>
+    ${groups || `<div class="empty-hint">この日の記録はまだありません</div>`}
+    <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div>${(proteinTotal > 0 || fatTotal > 0 || carbsTotal > 0) ? `<div class="total-row"><span class="label">PFC合計</span><span class="value">P${proteinTotal}g / F${fatTotal}g / C${carbsTotal}g</span></div>` : ''}</div>
+
+    <button type="button" class="accordion-toggle" id="fav-toggle-btn" style="margin-top:16px;">
       <span><i class="ti ti-star"></i> よく食べるものリスト (${state.favoriteMeals.length})</span>
       <i class="ti ${favListOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
     </button>
     ${favListOpen ? `<div class="chip-row" style="margin-bottom:16px;">${favoriteChips || '<span class="sub" style="padding:6px;">登録がありません</span>'}</div>` : ''}
 
-    <div class="field" style="margin-top:8px;">
-      <label>写真から自動入力 (Gemini APIキーを使用)</label>
-      <input type="file" accept="image/*" id="meal-photo-input">
-      <div id="meal-photo-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;"></div>
-    </div>
-    
-    <button type="button" class="secondary" id="req-meal-advice-btn" style="margin-top:16px; width:100%;">✨ 現状からAIに食事のアドバイスをもらう</button>
+    <button type="button" class="accordion-toggle" id="photo-toggle-btn">
+      <span><i class="ti ti-camera"></i> 写真から入力 (料理 / 成分表示)</span>
+      <i class="ti ${photoSectionOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
+    </button>
+    ${photoSectionOpen ? `
+      <div class="field">
+        <label>料理の写真から推測 (見た目からの推定)</label>
+        <input type="file" accept="image/*" id="meal-photo-input">
+        <div id="meal-photo-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;"></div>
+      </div>
+      <div class="field">
+        <label>栄養成分表示の写真から読む (市販品はこちらの方が正確)</label>
+        <input type="file" accept="image/*" id="meal-label-photo-input">
+        <div id="meal-label-photo-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;"></div>
+      </div>
+    ` : ''}
 
-    <p class="section-title">${activeLogDate === todayKey() ? '今日' : activeLogDate} の記録</p>
-    ${groups || `<div class="empty-hint">この日の記録はまだありません</div>`}
-    <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div>${(proteinTotal > 0 || fatTotal > 0 || carbsTotal > 0) ? `<div class="total-row"><span class="label">PFC合計</span><span class="value">P${proteinTotal}g / F${fatTotal}g / C${carbsTotal}g</span></div>` : ''}</div>
+    <button type="button" class="secondary" id="req-meal-advice-btn" style="margin-top:8px; width:100%;">✨ 現状からAIに食事のアドバイスをもらう</button>
   `;
 }
 
@@ -1093,6 +1325,7 @@ function renderSettings() {
     <p class="section-title">目標設定</p>
     <div class="field"><label>1日の目標セット数</label><input type="number" id="goal-sets" value="${state.goals.dailySetTarget}"></div>
     <div class="field"><label>1日のカロリー上限 (kcal)</label><input type="number" id="goal-calories" value="${state.goals.dailyCalorieTarget}"></div>
+    <div class="field"><label>1日のたんぱく質目標 (g)</label><input type="number" id="goal-protein" value="${state.goals.dailyProteinTarget || 100}"></div>
     <button class="primary" id="save-goals-btn" style="margin-bottom:20px;">目標を保存</button>
 
     <p class="section-title">キャラクター設定</p>
@@ -1200,6 +1433,25 @@ function attachEvents() {
       state.haveToList.items.push({ id: uid(), text, done: false }); saveState(); render();
     });
   }
+  const addWeightBtn = document.getElementById('add-weight-btn');
+  if (addWeightBtn) {
+    addWeightBtn.addEventListener('click', () => {
+      const input = document.getElementById('input-weight-today');
+      const val = Number(input ? input.value : '');
+      if (!val || val < 20 || val > 300) { alert('体重を正しく入力してください'); return; }
+      const today = todayKey();
+      const existing = state.weightLogs.find(l => l.date === today);
+      if (existing) existing.weight = val; else state.weightLogs.push({ id: uid(), date: today, weight: val });
+      state.settings.bodyWeightKg = val;
+      saveState(); render();
+    });
+  }
+  document.querySelectorAll('[data-delete-weight]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('この体重記録を削除しますか?')) return;
+      state.weightLogs = state.weightLogs.filter(l => l.id !== btn.dataset.deleteWeight); saveState(); render();
+    });
+  });
   document.querySelectorAll('[data-haveto-toggle]').forEach(chk => {
     chk.addEventListener('change', (e) => {
       const item = state.haveToList.items.find(i => i.id === chk.dataset.havetoToggle);
@@ -1330,6 +1582,8 @@ function attachEvents() {
 
   const favToggleBtn = document.getElementById('fav-toggle-btn');
   if (favToggleBtn) { favToggleBtn.addEventListener('click', () => { favListOpen = !favListOpen; render(); }); }
+  const photoToggleBtn = document.getElementById('photo-toggle-btn');
+  if (photoToggleBtn) { photoToggleBtn.addEventListener('click', () => { photoSectionOpen = !photoSectionOpen; render(); }); }
   document.querySelectorAll('[data-favorite-tap]').forEach(chip => {
     chip.addEventListener('click', (e) => {
       if (e.target.closest('[data-favorite-remove]')) return;
@@ -1373,6 +1627,22 @@ function attachEvents() {
       const carbsInput = document.getElementById('meal-carbs');
       if (carbsInput && result.carbs !== null && result.carbs !== undefined) carbsInput.value = result.carbs;
       if (statusEl) statusEl.textContent = `判定結果を入力しました: ${result.name} (約${result.calories}kcal${result.protein ? ` / たんぱく質約${result.protein}g` : ''}${result.fat ? ` / 脂質約${result.fat}g` : ''}${result.carbs ? ` / 炭水化物約${result.carbs}g` : ''})${result.note ? ` ※${result.note}` : ''} ※量は写真からの推定です。記録前に数字を確認してください`;
+    });
+  }
+
+  const labelPhotoInput = document.getElementById('meal-label-photo-input');
+  if (labelPhotoInput) {
+    labelPhotoInput.addEventListener('change', async () => {
+      const file = labelPhotoInput.files && labelPhotoInput.files[0]; if (!file) return;
+      const statusEl = document.getElementById('meal-label-photo-status');
+      if (!state.settings.geminiApiKey) { if (statusEl) statusEl.textContent = '設定画面でGemini APIキーを登録してください'; return; }
+      if (statusEl) statusEl.textContent = 'AIが成分表示を読み取り中…';
+      const result = await fetchGeminiLabelRecognition(file);
+      if (result.error) { if (statusEl) statusEl.textContent = `読み取りに失敗しました。手動で入力してください。(詳細: ${result.detail || result.error})`; return; }
+      if (result.name) document.getElementById('meal-name').value = result.name;
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== null && v !== undefined) el.value = v; };
+      setVal('meal-calories', result.calories); setVal('meal-protein', result.protein); setVal('meal-fat', result.fat); setVal('meal-carbs', result.carbs);
+      if (statusEl) statusEl.textContent = `成分表示から入力しました: ${result.calories ?? '?'}kcal / P${result.protein ?? '?'}g / F${result.fat ?? '?'}g / C${result.carbs ?? '?'}g ${result.basis === 'per_100g' ? '※100gあたりの値です。食べる量に合わせて直してください' : '※1個・1食あたりの値として読みました'}${result.note ? ` ※${result.note}` : ''}`;
     });
   }
 
@@ -1449,6 +1719,7 @@ function attachEvents() {
     saveGoalsBtn.addEventListener('click', () => {
       state.goals.dailySetTarget = Number(document.getElementById('goal-sets').value) || 0;
       state.goals.dailyCalorieTarget = Number(document.getElementById('goal-calories').value) || 0;
+      state.goals.dailyProteinTarget = Number(document.getElementById('goal-protein').value) || 100;
       saveState(); alert('目標を保存しました');
     });
   }
@@ -1553,6 +1824,7 @@ function attachEvents() {
 applyThemeColors();
 render();
 if (state.settings.mascotEnabled) showMascot('neutral', pickLine('open'));
+checkEveningAlert();
 loadMascotImageCache();
 
 if ('serviceWorker' in navigator) {
