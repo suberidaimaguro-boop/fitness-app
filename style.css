@@ -13,6 +13,9 @@
   --danger: #d85a4a;
   --radius: 14px;
   --radius-sm: 8px;
+  --c-protein: #4cc3ff;
+  --c-fat: #ff9f43;
+  --c-carbs: #69db7c;
 }
 
 * { box-sizing: border-box; }
@@ -34,18 +37,20 @@ html, body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  padding-bottom: 76px;
+  padding-bottom: 118px;
 }
 
 .topbar {
-  padding: max(20px, env(safe-area-inset-top)) 20px 8px;
+  padding: max(30px, calc(env(safe-area-inset-top) + 16px)) 20px 10px;
   position: sticky;
   top: 0;
   background: var(--bg);
+  border-bottom: 0.5px solid var(--border);
   z-index: 5;
 }
 .topbar .date {
   font-size: 13px;
+  line-height: 1.5;
   color: var(--text-secondary);
   margin: 0 0 2px;
 }
@@ -318,15 +323,20 @@ button.secondary {
 /* ---- Bottom nav ---- */
 .tabbar {
   position: fixed;
-  bottom: 0;
+  bottom: calc(10px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
-  width: 100%;
-  max-width: 480px;
+  width: calc(100% - 24px);
+  max-width: 456px;
   background: var(--surface);
-  border-top: 0.5px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 0.5px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
   display: flex;
-  padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+  padding: 6px;
   z-index: 10;
 }
 
@@ -334,18 +344,23 @@ button.secondary {
   flex: 1;
   background: none;
   border: none;
+  border-radius: 999px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 6px 0;
+  padding: 7px 0;
   color: var(--text-muted);
   font-family: inherit;
   font-size: 11px;
+  transition: background-color 0.15s, color 0.15s;
 }
 
 .tab-btn i { font-size: 20px; }
-.tab-btn.active { color: var(--gold); }
+.tab-btn.active {
+  color: var(--gold);
+  background: color-mix(in srgb, var(--gold) 16%, transparent);
+}
 
 .icon { display: inline-flex; }
 
@@ -512,6 +527,10 @@ button.secondary {
   background: var(--gold);
   color: var(--gold-on);
   font-weight: 600;
+}
+
+.calendar-day .cal-dot.weight-dot {
+  background: #ffffff;
 }
 
 .calendar-day .cal-dot {

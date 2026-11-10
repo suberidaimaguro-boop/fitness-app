@@ -849,8 +849,8 @@ function renderRemainingCard() {
       </div>
       <div class="stat-card">
         <p class="label"><i class="ti ti-egg"></i>たんぱく質</p>
-        <p class="value gold">${pRemain > 0 ? `あと ${pRemain}` : '目標達成'} <span class="unit">g</span></p>
-        <p class="sub" style="margin:4px 0 0;">現在 ${t.protein} / ${pTarget} g (F${t.fat}g / C${t.carbs}g)</p>
+        <p class="value" style="color:var(--c-protein);">${pRemain > 0 ? `あと ${pRemain}` : '目標達成'} <span class="unit">g</span></p>
+        <p class="sub" style="margin:4px 0 0;">現在 ${t.protein} / ${pTarget} g (<span style="color:var(--c-fat);">F${t.fat}g</span> / <span style="color:var(--c-carbs);">C${t.carbs}g</span>)</p>
       </div>
     </div>
   `;
@@ -859,7 +859,7 @@ function renderRemainingStrip() {
   const t = todaysPFC();
   const calRemain = state.goals.dailyCalorieTarget - t.kcal;
   const pRemain = (state.goals.dailyProteinTarget || 100) - t.protein;
-  return `<div class="list-card" style="padding:10px 14px; margin-bottom:12px; font-size:13px;">今日の残り: <strong style="color:var(--gold);">${calRemain >= 0 ? `あと ${calRemain.toLocaleString()}kcal` : `${Math.abs(calRemain).toLocaleString()}kcal超過`}</strong> / たんぱく質 <strong style="color:var(--gold);">${pRemain > 0 ? `あと ${pRemain}g` : '目標達成'}</strong></div>`;
+  return `<div class="list-card" style="padding:10px 14px; margin-bottom:12px; font-size:13px;">今日の残り: <strong style="color:var(--gold);">${calRemain >= 0 ? `あと ${calRemain.toLocaleString()}kcal` : `${Math.abs(calRemain).toLocaleString()}kcal超過`}</strong> / たんぱく質 <strong style="color:var(--c-protein);">${pRemain > 0 ? `あと ${pRemain}g` : '目標達成'}</strong></div>`;
 }
 function eveningShortfall() {
   if (new Date().getHours() < 17) return null;
@@ -1185,14 +1185,14 @@ function renderMeal() {
       <div class="list-row">
         <span class="val">${escapeHtml(m.name)}</span>
         <span style="display:flex; align-items:center; gap:8px;">
-          <span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / P${m.protein}g` : ''}${m.fat ? ` / F${m.fat}g` : ''}${m.carbs ? ` / C${m.carbs}g` : ''}</span>
+          <span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / <span style="color:var(--c-protein);">P${m.protein}g</span>` : ''}${m.fat ? ` / <span style="color:var(--c-fat);">F${m.fat}g</span>` : ''}${m.carbs ? ` / <span style="color:var(--c-carbs);">C${m.carbs}g</span>` : ''}</span>
           <button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button>
         </span>
       </div>`).join('');
     return `<p class="section-title">${cat}</p><div class="list-card">${rows}</div>`;
   }).join('');
 
-  const favoriteChips = state.favoriteMeals.map(f => `<span class="chip" data-favorite-tap="${f.id}">${escapeHtml(f.name)}(${f.calories}kcal${f.protein ? `/P${f.protein}g` : ''}${f.fat ? `/F${f.fat}g` : ''}${f.carbs ? `/C${f.carbs}g` : ''})<button type="button" class="chip-remove" data-favorite-remove="${f.id}">&times;</button></span>`).join('');
+  const favoriteChips = state.favoriteMeals.map(f => `<span class="chip" data-favorite-tap="${f.id}">${escapeHtml(f.name)}(${f.calories}kcal${f.protein ? `/<span style="color:var(--c-protein);">P${f.protein}g</span>` : ''}${f.fat ? `/<span style="color:var(--c-fat);">F${f.fat}g</span>` : ''}${f.carbs ? `/<span style="color:var(--c-carbs);">C${f.carbs}g</span>` : ''})<button type="button" class="chip-remove" data-favorite-remove="${f.id}">&times;</button></span>`).join('');
 
   return `
     ${renderLastAdvice()}
@@ -1210,12 +1210,12 @@ function renderMeal() {
       </datalist>
     </div>
     <div class="row-2">
-      <div class="field"><label>カロリー (kcal)</label><input type="number" id="meal-calories" inputmode="numeric" placeholder="350"></div>
-      <div class="field"><label>たんぱく質 (g)</label><input type="number" id="meal-protein" inputmode="decimal" placeholder="25"></div>
+      <div class="field"><label><span style="color:var(--gold);">●</span> カロリー (kcal)</label><input type="number" id="meal-calories" inputmode="numeric" placeholder="350"></div>
+      <div class="field"><label><span style="color:var(--c-protein);">●</span> たんぱく質 (g)</label><input type="number" id="meal-protein" inputmode="decimal" placeholder="25"></div>
     </div>
     <div class="row-2">
-      <div class="field"><label>脂質 (g)</label><input type="number" id="meal-fat" inputmode="decimal" placeholder="15"></div>
-      <div class="field"><label>炭水化物 (g)</label><input type="number" id="meal-carbs" inputmode="decimal" placeholder="50"></div>
+      <div class="field"><label><span style="color:var(--c-fat);">●</span> 脂質 (g)</label><input type="number" id="meal-fat" inputmode="decimal" placeholder="15"></div>
+      <div class="field"><label><span style="color:var(--c-carbs);">●</span> 炭水化物 (g)</label><input type="number" id="meal-carbs" inputmode="decimal" placeholder="50"></div>
     </div>
     <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー・PFC推測 (Groq)</button>
     <button class="primary" id="add-meal-btn">記録を追加</button>
@@ -1223,7 +1223,7 @@ function renderMeal() {
 
     <p class="section-title">${activeLogDate === todayKey() ? '今日' : activeLogDate} の記録</p>
     ${groups || `<div class="empty-hint">この日の記録はまだありません</div>`}
-    <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div>${(proteinTotal > 0 || fatTotal > 0 || carbsTotal > 0) ? `<div class="total-row"><span class="label">PFC合計</span><span class="value">P${proteinTotal}g / F${fatTotal}g / C${carbsTotal}g</span></div>` : ''}</div>
+    <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div>${(proteinTotal > 0 || fatTotal > 0 || carbsTotal > 0) ? `<div class="total-row"><span class="label">PFC合計</span><span class="value"><span style="color:var(--c-protein);">P${proteinTotal}g</span> / <span style="color:var(--c-fat);">F${fatTotal}g</span> / <span style="color:var(--c-carbs);">C${carbsTotal}g</span></span></div>` : ''}</div>
 
     <button type="button" class="accordion-toggle" id="fav-toggle-btn" style="margin-top:16px;">
       <span><i class="ti ti-star"></i> よく食べるものリスト (${state.favoriteMeals.length})</span>
@@ -1275,7 +1275,7 @@ function renderHistory() {
   let totalMealKcal = 0;
   const mealRows = meals.map(m => {
     totalMealKcal += (Number(m.calories) || 0);
-    return `<div class="list-row"><span class="val">${escapeHtml(m.name)} <span class="sub">${m.category}</span></span><span style="display:flex; align-items:center; gap:8px;"><span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / P${m.protein}g` : ''}${m.fat ? ` / F${m.fat}g` : ''}${m.carbs ? ` / C${m.carbs}g` : ''}</span><button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button></span></div>`;
+    return `<div class="list-row"><span class="val">${escapeHtml(m.name)} <span class="sub">${m.category}</span></span><span style="display:flex; align-items:center; gap:8px;"><span class="val gold">${Number(m.calories).toLocaleString()} kcal${m.protein ? ` / <span style="color:var(--c-protein);">P${m.protein}g</span>` : ''}${m.fat ? ` / <span style="color:var(--c-fat);">F${m.fat}g</span>` : ''}${m.carbs ? ` / <span style="color:var(--c-carbs);">C${m.carbs}g</span>` : ''}</span><button type="button" class="delete-btn" data-delete-meal="${m.id}">${TRASH_ICON_SVG}</button></span></div>`;
   }).join('');
 
   const netKcal = totalMealKcal - totalWorkoutKcal;
@@ -1287,8 +1287,14 @@ function renderHistory() {
   for (let d = 1; d <= daysInMonth; d++) {
     const dk = `${calendarYear}-${String(calendarMonth).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const hasRec = state.workoutLogs.some(l => l.date === dk) || state.meals.some(m => m.date === dk);
-    cells.push(`<button type="button" class="calendar-day ${dk === todayKey() ? 'today' : ''} ${dk === selectedHistoryDate ? 'selected' : ''}" data-calendar-day="${dk}">${d}${hasRec ? '<span class="cal-dot"></span>' : ''}</button>`);
+    const hasWeight = state.weightLogs.some(l => l.date === dk);
+    const rate = computeAchievementRateForDate(dk);
+    const isSelected = dk === selectedHistoryDate;
+    const heatStyle = (!isSelected && rate > 0) ? ` style="background: color-mix(in srgb, var(--gold) ${Math.round(15 + rate * 0.6)}%, transparent);"` : '';
+    const dot = hasWeight ? '<span class="cal-dot weight-dot"></span>' : (hasRec ? '<span class="cal-dot"></span>' : '');
+    cells.push(`<button type="button" class="calendar-day ${dk === todayKey() ? 'today' : ''} ${isSelected ? 'selected' : ''}" data-calendar-day="${dk}"${heatStyle}>${d}${dot}</button>`);
   }
+  const heatLegend = `<div style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text-secondary); margin:-6px 0 16px;"><span>達成率 低</span>${[15, 35, 55, 75].map(a => `<span style="display:inline-block; width:14px; height:14px; border-radius:4px; background: color-mix(in srgb, var(--gold) ${a}%, transparent);"></span>`).join('')}<span>高</span><span style="margin-left:10px;"><span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#fff; vertical-align:middle;"></span> 体重を記録した日</span></div>`;
 
   return `
     <div class="calendar-header">
@@ -1297,6 +1303,7 @@ function renderHistory() {
       <button type="button" class="calendar-nav-btn" id="calendar-next-btn">›</button>
     </div>
     <div class="calendar-grid">${['日','月','火','水','木','金','土'].map(w => `<div class="calendar-weekday">${w}</div>`).join('')}${cells.join('')}</div>
+    ${heatLegend}
     <p class="section-title">${selectedHistoryDate} の筋トレ記録</p>
     <div class="list-card" style="margin-bottom:16px;">${workoutRows || `<div class="empty-hint">この日の筋トレ記録はありません</div>`}</div>
     <p class="section-title">${selectedHistoryDate} の食事記録</p>
