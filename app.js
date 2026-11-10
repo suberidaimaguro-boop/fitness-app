@@ -669,6 +669,60 @@ async function fetchGeminiLabelRecognition(file) {
   }
 }
 
+
+function toGuessNumber(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  const s = String(v).replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)).replace(/,/g, '');
+  const nums = s.match(/\d+(?:\.\d+)?/g);
+  if (!nums) return null;
+  if (nums.length >= 2) return (Number(nums[0]) + Number(nums[1])) / 2;
+  return Number(nums[0]);
+}
+function findMealRecall(name) {
+  const sameName = [...state.meals].reverse().filter(m => m.name === name);
+  if (!sameName.length) return { calories: null, protein: null, fat: null, carbs: null };
+  const latestWith = key => { const rec = sameName.find(m => m[key] !== undefined && m[key] !== null); return rec ? rec[key] : null; };
+  return { calories: sameName[0].calories, protein: latestWith('protein'), fat: latestWith('fat'), carbs: latestWith('carbs') };
+}
+function parseGuessResponse(text) {
+  if (!text) return null;
+  const m = String(text).match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  let obj;
+  try { obj = JSON.parse(m[0]); } catch (e) { return null; }
+  const pick = (...keys) => { for (const k of keys) { if (obj[k] !== undefined) return obj[k]; } return undefined; };
+  const calories = toGuessNumber(pick('calories', 'kcal', 'energy', 'カロリー'));
+  if (calories === null) return null;
+  return {
+    calories: Math.round(calories),
+    protein: toGuessNumber(pick('protein_g', 'protein', 'たんぱく質')),
+    fat: toGuessNumber(pick('fat_g', 'fat', '脂質')),
+    carbs: toGuessNumber(pick('carbs_g', 'carbs', 'carbohydrate', '炭水化物'))
+  };
+}
+async function fetchGeminiTextGuess(name) {
+  const apiKey = state.settings.geminiApiKey;
+  if (!apiKey) return null;
+  try {
+    const prompt = `料理名「${name}」について、一般的な1人前の栄養成分を推測してください。丼もの・定食はご飯を含む1人前としてください。値は必ず単一の数値で答え、単位・「約」・幅(〜)は付けないでください。{"calories": 650, "protein_g": 38, "fat_g": 12, "carbs_g": 85} のように、キーと数値だけのJSONを返してください。説明文は一切付けないでください。`;
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.2, response_mime_type: 'application/json' }
+      })
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
+    return text || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function personaInstruction() {
   const name = (state.settings.userName || '').trim();
   const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
@@ -1217,7 +1271,8 @@ function renderMeal() {
       <div class="field"><label><span style="color:var(--c-fat);">●</span> 脂質 (g)</label><input type="number" id="meal-fat" inputmode="decimal" placeholder="15"></div>
       <div class="field"><label><span style="color:var(--c-carbs);">●</span> 炭水化物 (g)</label><input type="number" id="meal-carbs" inputmode="decimal" placeholder="50"></div>
     </div>
-    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー・PFC推測 (Groq)</button>
+    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー・PFC推測</button>
+    <div id="ai-guess-status" style="font-size:12px; color:var(--text-secondary); margin:-4px 0 12px;"></div>
     <button class="primary" id="add-meal-btn">記録を追加</button>
     <button class="secondary" id="save-favorite-btn" style="margin-bottom:12px;">☆ 今の内容を「よく食べるもの」に登録</button>
 
@@ -1801,42 +1856,59 @@ function attachEvents() {
   if (aiGuessBtn) {
     aiGuessBtn.addEventListener('click', async () => {
       const nameInput = document.getElementById('meal-name'); const name = nameInput.value.trim();
+      const statusEl = document.getElementById('ai-guess-status');
+      const setStatus = t => { if (statusEl) statusEl.textContent = t; };
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== null && v !== undefined) el.value = Math.round(v); };
       if (!name) { alert('先に食べたものを入力してください'); return; }
-      if (!state.settings.groqApiKey) { alert('設定画面からGroq APIキーを登録してください'); return; }
+      if (!state.settings.groqApiKey && !state.settings.geminiApiKey) { alert('設定画面からGroqまたはGeminiのAPIキーを登録してください'); return; }
       const prevText = aiGuessBtn.textContent; aiGuessBtn.textContent = '推測中...'; aiGuessBtn.disabled = true;
-      const prompt = `料理名「${name}」の一般的な1人前のカロリー(kcal、整数)とたんぱく質量(g、整数)、脂質量(g、整数)、炭水化物量(g、整数)を推測し、{\"calories\": 数値, \"protein_g\": 数値, \"fat_g\": 数値, \"carbs_g\": 数値} のJSON形式のみ返してください。前置きや解説は一切不要です。`;
-      const resText = await fetchGroqComment(prompt, { jsonOnly: true });
+      setStatus('AIが推測中…');
+      const basePrompt = `料理名「${name}」について、一般的な1人前の栄養成分を推測してください。丼もの・定食はご飯を含む1人前としてください。値は必ず単一の数値で答え、単位・「約」・幅(〜)は付けないでください。{"calories": 650, "protein_g": 38, "fat_g": 12, "carbs_g": 85} のように、キーと数値だけのJSONを返してください。説明文は一切付けないでください。`;
+      let guess = null; let source = ''; let rawSnippet = '';
+      if (state.settings.groqApiKey) {
+        const resText = await fetchGroqComment(basePrompt, { jsonOnly: true, maxTokens: 400 });
+        guess = parseGuessResponse(resText); if (guess) source = 'Groq';
+        if (!guess) {
+          if (resText) rawSnippet = String(resText).slice(0, 120);
+          const retryText = await fetchGroqComment(basePrompt + '前回の応答はJSONとして読み取れませんでした。JSONだけを返してください。', { jsonOnly: true, maxTokens: 400 });
+          guess = parseGuessResponse(retryText); if (guess) source = 'Groq';
+          else if (retryText) rawSnippet = String(retryText).slice(0, 120);
+        }
+      }
+      if (!guess && state.settings.geminiApiKey) {
+        const gText = await fetchGeminiTextGuess(name);
+        guess = parseGuessResponse(gText); if (guess) source = 'Gemini';
+        else if (gText) rawSnippet = String(gText).slice(0, 120);
+      }
       aiGuessBtn.textContent = prevText; aiGuessBtn.disabled = false;
-      try {
-        const cleaned = resText.replace(/```json|```/g, '').trim(); const parsed = JSON.parse(cleaned);
-        document.getElementById('meal-calories').value = parsed.calories;
-        const proteinInput = document.getElementById('meal-protein');
-        if (proteinInput && parsed.protein_g !== undefined && parsed.protein_g !== null && !isNaN(Number(parsed.protein_g))) proteinInput.value = Math.round(Number(parsed.protein_g));
-        const fatInput = document.getElementById('meal-fat');
-        if (fatInput && parsed.fat_g !== undefined && parsed.fat_g !== null && !isNaN(Number(parsed.fat_g))) fatInput.value = Math.round(Number(parsed.fat_g));
-        const carbsInput = document.getElementById('meal-carbs');
-        if (carbsInput && parsed.carbs_g !== undefined && parsed.carbs_g !== null && !isNaN(Number(parsed.carbs_g))) carbsInput.value = Math.round(Number(parsed.carbs_g));
-      } catch (e) { alert('推測に失敗しました。手動で入力してください。'); }
+      if (guess) {
+        document.getElementById('meal-calories').value = guess.calories;
+        setVal('meal-protein', guess.protein); setVal('meal-fat', guess.fat); setVal('meal-carbs', guess.carbs);
+        const pv = v => (v !== null && v !== undefined) ? Math.round(v) : '?';
+        setStatus(`推測しました (${source}): ${guess.calories}kcal / P${pv(guess.protein)}g / F${pv(guess.fat)}g / C${pv(guess.carbs)}g ※一般的な1人前の推定です。量が違う場合は直してください`);
+        return;
+      }
+      const recall = (typeof findMealRecall === 'function') ? findMealRecall(name) : null;
+      if (recall && recall.calories !== null && recall.calories !== undefined) {
+        document.getElementById('meal-calories').value = recall.calories;
+        setVal('meal-protein', recall.protein); setVal('meal-fat', recall.fat); setVal('meal-carbs', recall.carbs);
+        setStatus('AI推測はできませんでしたが、過去の記録から入力しました。内容を確認してください');
+        return;
+      }
+      setStatus(`推測に失敗しました。手動で入力してください。${rawSnippet ? ` (AIの応答: ${rawSnippet})` : ''}`);
+      alert('推測に失敗しました。手動で入力してください。');
     });
   }
 
   const mealNameInput = document.getElementById('meal-name');
   if (mealNameInput) {
     mealNameInput.addEventListener('change', () => {
-      const name = mealNameInput.value.trim();
-      const sameName = [...state.meals].reverse().filter(m => m.name === name);
-      const pastMeal = sameName[0];
-      const calInput = document.getElementById('meal-calories');
-      if (pastMeal && !calInput.value) { calInput.value = pastMeal.calories; }
-      const fillLatest = (inputId, key) => {
-        const input = document.getElementById(inputId);
-        if (!input || input.value) return;
-        const rec = sameName.find(m => m[key] !== undefined && m[key] !== null);
-        if (rec) input.value = rec[key];
-      };
-      fillLatest('meal-protein', 'protein');
-      fillLatest('meal-fat', 'fat');
-      fillLatest('meal-carbs', 'carbs');
+      const recall = findMealRecall(mealNameInput.value.trim());
+      const fill = (id, v) => { const el = document.getElementById(id); if (el && !el.value && v !== null && v !== undefined) el.value = v; };
+      fill('meal-calories', recall.calories);
+      fill('meal-protein', recall.protein);
+      fill('meal-fat', recall.fat);
+      fill('meal-carbs', recall.carbs);
     });
   }
 }
