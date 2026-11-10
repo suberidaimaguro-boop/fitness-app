@@ -816,7 +816,7 @@ function renderWeightCard() {
     <div class="list-card" style="padding:14px 16px; margin-bottom:12px;">
       ${summary}
       ${chartHtml}
-      <div class="row-2" style="margin-top:12px;">
+      <div class="row-2" style="margin-top:12px;" data-focus-scope>
         <input type="number" id="input-weight-today" inputmode="decimal" placeholder="今日の体重 (kg)" value="${inputVal}">
         <button type="button" class="secondary" id="add-weight-btn">${todayLog ? '今日の体重を更新' : '体重を記録'}</button>
       </div>
@@ -1418,6 +1418,19 @@ function render() {
 
 function attachEvents() {
   document.querySelectorAll('[data-tab]').forEach(btn => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
+  document.querySelectorAll('.field, [data-focus-scope]').forEach(scope => {
+    scope.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      const control = scope.querySelector('input:not([type="checkbox"]):not([type="file"]):not([type="color"]):not([type="hidden"]), select, textarea');
+      if (!control || control.disabled) return;
+      control.focus({ preventScroll: true });
+      if (control.tagName === 'SELECT' || control.type === 'date') {
+        control.click();
+      } else if (control.type === 'text' || control.type === 'number') {
+        try { const len = control.value.length; control.setSelectionRange(len, len); } catch (err) {}
+      }
+    });
+  });
   const closeAdviceBtn = document.getElementById('close-advice-btn');
   if (closeAdviceBtn) closeAdviceBtn.addEventListener('click', () => { lastAdvice = null; render(); });
   document.querySelectorAll('.weekly-toggle-btn').forEach(btn => {

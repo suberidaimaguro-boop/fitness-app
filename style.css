@@ -140,14 +140,24 @@ select, input[type="text"], input[type="number"], input[type="date"] {
   border: 0.5px solid var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 10px 12px;
+  padding: 14px 12px;
+  min-height: 52px;
   font-size: 15px;
   font-family: inherit;
+  touch-action: manipulation;
 }
 
 select:focus, input:focus {
   outline: none;
   border-color: var(--gold);
+}
+
+.field, .field label {
+  cursor: text;
+}
+
+input, select, textarea {
+  -webkit-tap-highlight-color: transparent;
 }
 
 .row-2 {
