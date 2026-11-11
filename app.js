@@ -27,6 +27,8 @@ function defaultState() {
       groqApiKey: '',
       userName: '',
       honorific: 'さん',
+      speechStyle: 'genki',
+      speechStyleCustom: '',
       bodyHeightCm: null,
       bodyWeightKg: null,
       goalWeightKg: null,
@@ -55,6 +57,8 @@ function loadState() {
       }
       if (parsed.settings.mascotEnabled === undefined) parsed.settings.mascotEnabled = true;
       if (parsed.settings.honorific === undefined) parsed.settings.honorific = 'さん';
+      if (parsed.settings.speechStyle === undefined) parsed.settings.speechStyle = 'genki';
+      if (parsed.settings.speechStyleCustom === undefined) parsed.settings.speechStyleCustom = '';
       if (!parsed.settings.themeAccent) parsed.settings.themeAccent = '#d4a373';
       if (!parsed.settings.themeBg) parsed.settings.themeBg = '#121212';
       if (parsed.settings.bodyHeightCm === undefined) parsed.settings.bodyHeightCm = null;
@@ -426,6 +430,77 @@ const MASCOT_LINES = {
   mealOverAngry: ['ちょっと!カロリー上限オーバーしてるじゃん!もう今日はこれ以上食べちゃダメだぞ!']
 };
 
+
+const SPEECH_STYLES = {
+  genki: {
+    label: '元気な応援キャラ（今まで通り）',
+    instruction: '口調はタメ口寄りのフランクで元気なノリにしてください(「〜だよ」ではなく「〜だぞ!」「〜じゃん!」)。',
+    evening: s => `夕方チェックだぞ。今日のたんぱく質は記録では${s.pTotal}gで、目標${s.pTarget}gまであと${s.remain}g足りないぞ。${eveningSuggestions(s.remain)}で埋められるぞ!`
+  },
+  yasashii: {
+    label: '優しい癒し系',
+    instruction: '口調は優しく穏やかにしてください。「〜だね」「〜だよ」の柔らかい言い方で、否定や命令はせず、寄り添うように励ましてください。',
+    evening: s => `夕方チェックだよ。今日のたんぱく質は記録では${s.pTotal}gで、目標${s.pTarget}gまであと${s.remain}gだね。${eveningSuggestions(s.remain)}で無理なく埋められるよ。`
+  },
+  kibishii: {
+    label: '厳しい鬼トレーナー',
+    instruction: '口調は厳しいトレーナーのように、短く力強い命令口調にしてください。ただし人格を否定したり体型を馬鹿にしたりは絶対にしないでください。厳しさの中にも、認める一言を入れてください。',
+    evening: s => `夕方チェックだ。たんぱく質は記録では${s.pTotal}g、目標${s.pTarget}gまであと${s.remain}g不足している。${eveningSuggestions(s.remain)}で必ず埋めろ。`
+  },
+  teinei: {
+    label: '丁寧な秘書風',
+    instruction: '口調は丁寧な秘書のように、「です・ます」の敬語で礼儀正しくしてください。数字は正確に、簡潔に伝えてください。',
+    evening: s => `夕方チェックです。今日のたんぱく質は記録では${s.pTotal}g、目標${s.pTarget}gまであと${s.remain}gでございます。${eveningSuggestions(s.remain)}で補えます。`
+  },
+  friend: {
+    label: 'フランクな友達',
+    instruction: '口調は仲の良い友達のように、軽いタメ口で話してください。「〜じゃん」「〜だね」を使い、重くならないノリで励ましてください。絵文字は使わないでください。',
+    evening: s => `夕方チェック〜。たんぱく質は今${s.pTotal}gで、目標${s.pTarget}gまであと${s.remain}g足りないよ。${eveningSuggestions(s.remain)}で埋めちゃお。`
+  },
+  custom: {
+    label: 'カスタム（自由入力）',
+    instruction: '',
+    evening: s => `夕方チェック: 今日のたんぱく質は記録では${s.pTotal}g、目標${s.pTarget}gまであと${s.remain}gです。${eveningSuggestions(s.remain)}で埋められます。`
+  }
+};
+const SPEECH_LINES = {
+  yasashii: {
+    open: ['今日も一緒にがんばろうね', 'おかえり。無理しないペースでいこうね'],
+    workoutAdd: ['よくがんばったね。えらいよ', 'いい運動になったね'],
+    mealSnackAdd: ['間食も記録できてえらいね。量だけ気をつけようね', '大丈夫、次で調整すればいいよ'],
+    mealNormalAdd: ['記録ありがとう。助かるよ', 'ちゃんと記録できてすごいね'],
+    workoutPR: ['自己ベスト更新だね。すごいよ'],
+    mealOverAngry: ['今日はカロリーが上限を超えちゃったね。明日からまた一緒に調整しよう']
+  },
+  kibishii: {
+    open: ['さあ、今日もやるぞ。言い訳は無しだ', '来たな。今日のノルマを果たせ'],
+    workoutAdd: ['よし、悪くない。次も気合を入れろ', 'その調子だ。手を抜くなよ'],
+    mealSnackAdd: ['間食だと？記録しただけマシだが、次は我慢しろ', 'ふむ、正直に記録したのは認めよう'],
+    mealNormalAdd: ['記録完了。当然のことだが、続けることが大事だ', 'よし。その規律を保て'],
+    workoutPR: ['自己ベスト更新か。認めてやる、よくやった'],
+    mealOverAngry: ['上限超過だ。これ以上は食べるな。明日で取り返せ']
+  },
+  teinei: {
+    open: ['お帰りなさいませ。本日も記録をお手伝いします', 'お疲れさまです。今日の記録を始めましょう'],
+    workoutAdd: ['お疲れさまでした。素晴らしい記録です', '記録いたしました。その調子です'],
+    mealSnackAdd: ['間食を記録いたしました。量にはお気をつけください', '承知いたしました。次回で調整しましょう'],
+    mealNormalAdd: ['記録いたしました。ありがとうございます', 'かしこまりました。その調子で続けましょう'],
+    workoutPR: ['自己ベスト更新、おめでとうございます'],
+    mealOverAngry: ['本日のカロリーが上限を超えております。以後はお控えくださいますよう、お願いいたします']
+  },
+  friend: {
+    open: ['おつかれ〜、今日も記録しよ', 'やっほー、調子どう？'],
+    workoutAdd: ['ナイス！いい感じじゃん', 'お、やったね'],
+    mealSnackAdd: ['間食しちゃったか〜、まあ記録したからセーフ', '正直に記録するの偉い'],
+    mealNormalAdd: ['記録オッケー、その調子', 'いいねいいね'],
+    workoutPR: ['自己ベスト！まじすごいじゃん'],
+    mealOverAngry: ['あー、今日はカロリーオーバーしちゃったね。明日調整しよ']
+  }
+};
+function currentSpeechStyle() {
+  return SPEECH_STYLES[state.settings.speechStyle] || SPEECH_STYLES.genki;
+}
+
 function greetingPrefix() {
   const name = (state.settings.userName || '').trim();
   const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
@@ -433,7 +508,8 @@ function greetingPrefix() {
 }
 
 function pickLine(key) {
-  const arr = MASCOT_LINES[key];
+  const styleId = state.settings.speechStyle || 'genki';
+  const arr = (SPEECH_LINES[styleId] && SPEECH_LINES[styleId][key]) || MASCOT_LINES[key];
   return `${greetingPrefix()}${arr[Math.floor(Math.random() * arr.length)]}`;
 }
 
@@ -615,16 +691,30 @@ function parseFoodResponse(text) {
   if (!m) return null;
   let obj;
   try { obj = JSON.parse(m[0]); } catch (e) { return null; }
-  const calories = toGuessNumber(obj.calories !== undefined ? obj.calories : obj.kcal);
+  let calories = toGuessNumber(obj.calories !== undefined ? obj.calories : obj.kcal);
+  let protein = toGuessNumber(obj.protein_g);
+  let fat = toGuessNumber(obj.fat_g);
+  let carbs = toGuessNumber(obj.carbs_g);
+  let itemsText = '';
+  if (Array.isArray(obj.items) && obj.items.length) {
+    const has = k => obj.items.some(it => it && toGuessNumber(k === 'calories' ? (it.calories !== undefined ? it.calories : it.kcal) : it[k]) !== null);
+    const sum = k => obj.items.reduce((s, it) => { if (!it) return s; const v = k === 'calories' ? (it.calories !== undefined ? it.calories : it.kcal) : it[k]; const n = toGuessNumber(v); return n === null ? s : s + n; }, 0);
+    if (calories === null && has('calories')) calories = sum('calories');
+    if (protein === null && has('protein_g')) protein = sum('protein_g');
+    if (fat === null && has('fat_g')) fat = sum('fat_g');
+    if (carbs === null && has('carbs_g')) carbs = sum('carbs_g');
+    const names = obj.items.map(it => it && it.name).filter(Boolean);
+    if (names.length) itemsText = `内訳: ${names.join('・')}`;
+  }
   if (calories === null) return null;
-  const num = v => { const n = toGuessNumber(v); return n === null ? null : Math.round(n); };
+  const roundOrNull = v => (v === null || v === undefined) ? null : Math.round(v);
   return {
     name: typeof obj.name === 'string' ? obj.name : '',
     calories: Math.round(calories),
-    protein: num(obj.protein_g),
-    fat: num(obj.fat_g),
-    carbs: num(obj.carbs_g),
-    note: obj.note || ''
+    protein: roundOrNull(protein),
+    fat: roundOrNull(fat),
+    carbs: roundOrNull(carbs),
+    note: [obj.note || '', itemsText].filter(Boolean).join(' / ')
   };
 }
 
@@ -634,7 +724,7 @@ async function fetchGeminiFoodRecognition(file) {
   let base64Data;
   let mimeType = 'image/jpeg';
   try {
-    const dataUrl = await resizeImageFile(file, 1024, 0.82);
+    const dataUrl = await resizeImageFile(file, 1280, 0.82);
     base64Data = dataUrl.slice(dataUrl.indexOf(',') + 1);
   } catch (convErr) {
     try {
@@ -644,13 +734,21 @@ async function fetchGeminiFoodRecognition(file) {
       return { error: 'exception', detail: '画像の読み込みに失敗しました: ' + e.message };
     }
   }
-  const prompt = '写真の食事全体を見て、料理名(複数ある場合は「○○と△△」のようにまとめる)、推定カロリー(kcal、整数)、推定たんぱく質量(g、整数)、推定脂質量(g、整数)、推定炭水化物量(g、整数)、短い根拠メモを判定し、{\"name\": \"料理名\", \"calories\": 数値, \"protein_g\": 数値, \"fat_g\": 数値, \"carbs_g\": 数値, \"note\": \"根拠を30字以内\"} のJSON形式のみ返してください。量が写真から判断できない部分は一般的な1人前として推定し、前置きや解説はJSON以外に一切付けないでください。数値は単位や「約」を付けず、数字だけで返してください。';
+  const prompt = '写真の食事を見て、写っている料理・食品を品目ごとに分け、各品目の推定カロリー(kcal)、たんぱく質(g)、脂質(g)、炭水化物(g)を推定し、全体の合計も出してください。量が写真から判断できない部分は一般的な1人前として推定してください。{\"name\": \"料理名(複数をまとめる)\", \"items\": [{\"name\": \"品目名\", \"calories\": 数値, \"protein_g\": 数値, \"fat_g\": 数値, \"carbs_g\": 数値}], \"calories\": 合計数値, \"protein_g\": 合計数値, \"fat_g\": 合計数値, \"carbs_g\": 合計数値, \"note\": \"根拠を30字以内\"} のJSON形式のみ返してください。数値は単位や「約」を付けず、数字だけで返してください。前置きや解説はJSON以外に一切付けないでください。';
+  const genConf = { temperature: 0.2, response_mime_type: 'application/json' };
   const result = await callGeminiGenerate(
     [{ inline_data: { mime_type: mimeType, data: base64Data } }, { text: prompt }],
-    { temperature: 0.2, response_mime_type: 'application/json' }
+    genConf
   );
   if (result.error) return result;
-  const parsed = parseFoodResponse(result.text);
+  let parsed = parseFoodResponse(result.text);
+  if (!parsed) {
+    const retry = await callGeminiGenerate(
+      [{ inline_data: { mime_type: mimeType, data: base64Data } }, { text: prompt + ' 前回は形式が崩れて読み取れませんでした。余分な文章を一切付けず、JSONのみで返してください。' }],
+      genConf
+    );
+    if (!retry.error) parsed = parseFoodResponse(retry.text);
+  }
   if (!parsed) return { error: 'parse', detail: `AIの応答を読み取れませんでした: ${String(result.text).slice(0, 100)}` };
   return parsed;
 }
@@ -737,7 +835,14 @@ function personaInstruction() {
   const name = (state.settings.userName || '').trim();
   const h = state.settings.honorific === 'none' ? '' : state.settings.honorific;
   const nameNote = name ? `ユーザーの名前は「${name}」です。「${name}${h}」と呼んでください。` : '';
-  return `あなたは筋トレ・食事管理アプリの応援キャラです。口調はタメ口寄りのフランクで元気なノリにしてください(「〜だよ」ではなく「〜だぞ!」「〜じゃん!」)。${nameNote}`;
+  let styleText;
+  if (state.settings.speechStyle === 'custom') {
+    const custom = (state.settings.speechStyleCustom || '').trim();
+    styleText = custom ? `口調は次の指定に厳密に従ってください: ${custom}` : SPEECH_STYLES.genki.instruction;
+  } else {
+    styleText = currentSpeechStyle().instruction;
+  }
+  return `あなたは筋トレ・食事管理アプリの応援キャラです。${styleText}${nameNote}`;
 }
 
 /* ===== v28: AIへ渡す文脈と、長文アドバイス表示 ===== */
@@ -901,8 +1006,13 @@ function renderRemainingCard() {
   const t = todaysPFC();
   const calTarget = state.goals.dailyCalorieTarget;
   const pTarget = state.goals.dailyProteinTarget || 100;
+  const fTarget = Math.round(calTarget * 0.25 / 9);
+  const cTarget = Math.round(calTarget * 0.55 / 4);
   const calRemain = calTarget - t.kcal;
-  const pRemain = pTarget - t.protein;
+  const pRemain = Math.round((pTarget - t.protein) * 10) / 10;
+  const fRemain = Math.round(fTarget - t.fat);
+  const cRemain = Math.round(cTarget - t.carbs);
+  const remainText = (remain, doneText) => remain > 0 ? `あと ${remain}` : (remain === 0 ? doneText : `${Math.abs(remain)} 超過`);
   return `
     <p class="section-title">今日の残り</p>
     <div class="stat-grid">
@@ -910,13 +1020,28 @@ function renderRemainingCard() {
         <p class="label"><i class="ti ti-flame"></i>カロリー</p>
         <p class="value gold">${calRemain >= 0 ? `あと ${calRemain.toLocaleString()}` : `${Math.abs(calRemain).toLocaleString()} 超過`} <span class="unit">kcal</span></p>
         <p class="sub" style="margin:4px 0 0;">現在 ${t.kcal.toLocaleString()} / ${calTarget.toLocaleString()} kcal</p>
+        <p style="font-size:11px; color:var(--text-muted); margin:6px 0 0; line-height:1.5;">体を動かすエネルギーの総量。摂りすぎは脂肪に、不足しすぎると筋肉まで落ちる</p>
       </div>
       <div class="stat-card">
-        <p class="label"><i class="ti ti-egg"></i>たんぱく質</p>
-        <p class="value" style="color:var(--c-protein);">${pRemain > 0 ? `あと ${pRemain}` : '目標達成'} <span class="unit">g</span></p>
-        <p class="sub" style="margin:4px 0 0;">現在 ${t.protein} / ${pTarget} g (<span style="color:var(--c-fat);">F${t.fat}g</span> / <span style="color:var(--c-carbs);">C${t.carbs}g</span>)</p>
+        <p class="label"><i class="ti ti-egg"></i><span style="color:var(--c-protein);">たんぱく質</span></p>
+        <p class="value" style="color:var(--c-protein);">${remainText(pRemain, '目標達成')} <span class="unit">g</span></p>
+        <p class="sub" style="margin:4px 0 0;">現在 ${t.protein} / ${pTarget} g</p>
+        <p style="font-size:11px; color:var(--text-muted); margin:6px 0 0; line-height:1.5;">筋肉・肌・髪の材料。不足すると筋肉が落ちて代謝も下がりやすい</p>
+      </div>
+      <div class="stat-card">
+        <p class="label"><i class="ti ti-droplet"></i><span style="color:var(--c-fat);">脂質</span></p>
+        <p class="value" style="color:var(--c-fat);">${remainText(fRemain, '目安ぴったり')} <span class="unit">g</span></p>
+        <p class="sub" style="margin:4px 0 0;">現在 ${Math.round(t.fat)} / 目安 ${fTarget} g</p>
+        <p style="font-size:11px; color:var(--text-muted); margin:6px 0 0; line-height:1.5;">ホルモンや細胞膜の材料で、ビタミンの吸収も助ける。摂りすぎると太りやすい</p>
+      </div>
+      <div class="stat-card">
+        <p class="label"><i class="ti ti-wheat"></i><span style="color:var(--c-carbs);">炭水化物</span></p>
+        <p class="value" style="color:var(--c-carbs);">${remainText(cRemain, '目安ぴったり')} <span class="unit">g</span></p>
+        <p class="sub" style="margin:4px 0 0;">現在 ${Math.round(t.carbs)} / 目安 ${cTarget} g</p>
+        <p style="font-size:11px; color:var(--text-muted); margin:6px 0 0; line-height:1.5;">脳と筋肉の主なエネルギー源。不足すると集中力やトレーニングのパワーが落ちやすい</p>
       </div>
     </div>
+    <p class="sub" style="margin:0 0 12px; font-size:11px;">脂質・炭水化物の目安はカロリー目標からの自動計算です（脂質25%・炭水化物55%）</p>
   `;
 }
 function renderRemainingStrip() {
@@ -975,7 +1100,7 @@ function checkEveningAlert() {
   if (!s) return;
   eveningAlertShown = true;
   try { localStorage.setItem('fitnessEveningAlertDate', todayKey()); } catch (e) {}
-  showMascot('dismay', `夕方チェックだぞ。今日のたんぱく質は記録では${s.pTotal}gで、目標${s.pTarget}gまであと${s.remain}g足りないぞ。${eveningSuggestions(s.remain)}で埋められるぞ!`, true, '夕方チェック');
+  showMascot('dismay', currentSpeechStyle().evening(s), true, '夕方チェック');
 }
 
 /* ===== 描画処理 ===== */
@@ -1311,6 +1436,7 @@ function renderMeal() {
         <input type="file" accept="image/*" id="meal-label-photo-input">
         <div id="meal-label-photo-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;"></div>
       </div>
+      <p class="sub" style="margin:2px 0 10px; font-size:11px; line-height:1.6;">コツ: 明るい場所で真上から、料理全体が入るように撮ると成功しやすいです。量や油は写真では分からないため誤差は出ます。市販品は成分表示の方が正確です。</p>
     ` : ''}
 
     <button type="button" class="secondary" id="req-meal-advice-btn" style="margin-top:8px; width:100%;">✨ 現状からAIに食事のアドバイスをもらう</button>
@@ -1406,6 +1532,8 @@ function renderSettings() {
     </div>
     ${state.settings.mascotEnabled ? `
       <div class="field"><label>キャラクターからの呼ばれ方 (敬称)</label><div class="row-3"><button type="button" class="secondary honorific-btn" data-honorific="さん" style="${state.settings.honorific === 'さん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">さん</button><button type="button" class="secondary honorific-btn" data-honorific="くん" style="${state.settings.honorific === 'くん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">くん</button><button type="button" class="secondary honorific-btn" data-honorific="none" style="${state.settings.honorific === 'none' ? 'border-color:var(--gold); color:var(--gold);' : ''}">呼び捨て</button></div></div>
+      <div class="field"><label>キャラの話し方</label><select id="speech-style-select">${Object.entries(SPEECH_STYLES).map(([id, s]) => `<option value="${id}" ${state.settings.speechStyle === id ? 'selected' : ''}>${s.label}</option>`).join('')}</select></div>
+      ${state.settings.speechStyle === 'custom' ? `<div class="field"><label>話し方の指定（自由入力）</label><input type="text" id="speech-style-custom" value="${escapeHtml(state.settings.speechStyleCustom || '')}" placeholder="例: 関西弁で、語尾は「〜やで」"><p class="sub" style="margin:6px 0 0;">カスタムが効くのはAIの言葉です。定型の挨拶などは標準の話し方になります。</p></div><button type="button" class="secondary" id="save-speech-custom-btn" style="margin-bottom:12px;">カスタムを保存</button>` : ''}
       <div class="field"><label>表示位置(ドラッグで変更可能)</label><button type="button" class="secondary" id="reset-mascot-position-btn">位置を右上に戻す</button></div>
       <div class="field"><label>使用セット</label><select id="mascot-set-select">${state.settings.mascotSets.map(s => `<option value="${s.id}" ${s.id === state.settings.activeMascotSetId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select></div>
       <div class="field"><label>セット追加</label><div class="row-2"><input type="text" id="new-set-name" placeholder="セット名(例: セットA)"><button type="button" class="secondary" id="add-mascot-set-btn">追加</button></div></div>
@@ -1777,6 +1905,23 @@ function attachEvents() {
   document.querySelectorAll('.honorific-btn').forEach((btn) => {
     btn.addEventListener('click', () => { state.settings.honorific = btn.dataset.honorific; saveState(); render(); });
   });
+  const speechStyleSelect = document.getElementById('speech-style-select');
+  if (speechStyleSelect) {
+    speechStyleSelect.addEventListener('change', () => {
+      state.settings.speechStyle = speechStyleSelect.value;
+      saveState(); render();
+      if (state.settings.speechStyle !== 'custom') showMascot('smile', pickLine('open'));
+    });
+  }
+  const saveSpeechCustomBtn = document.getElementById('save-speech-custom-btn');
+  if (saveSpeechCustomBtn) {
+    saveSpeechCustomBtn.addEventListener('click', () => {
+      const inp = document.getElementById('speech-style-custom');
+      state.settings.speechStyleCustom = inp ? inp.value.trim() : '';
+      saveState(); render();
+      showMascot('neutral', 'カスタムの話し方を保存しました。AIのコメントから反映されます。');
+    });
+  }
   const toggleMascotEnabled = document.getElementById('toggle-mascot-enabled');
   if (toggleMascotEnabled) { toggleMascotEnabled.addEventListener('change', () => { state.settings.mascotEnabled = toggleMascotEnabled.checked; saveState(); render(); }); }
   const mascotSetSelect = document.getElementById('mascot-set-select');
