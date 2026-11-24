@@ -150,6 +150,8 @@ select, input[type="text"], input[type="number"], input[type="date"] {
   font-size: 15px;
   font-family: inherit;
   touch-action: manipulation;
+  scroll-margin-top: 110px;
+  scroll-margin-bottom: 140px;
 }
 
 select:focus, input:focus {
@@ -374,6 +376,7 @@ button.secondary {
   gap: 6px;
   max-width: 240px;
   touch-action: none;
+  pointer-events: none;
 }
 
 .mascot-bubble {
@@ -388,6 +391,7 @@ button.secondary {
   opacity: 0;
   transform: translateY(6px);
   transition: opacity 0.25s ease, transform 0.25s ease;
+  display: none;
   pointer-events: none;
   white-space: pre-wrap;
   max-height: 42vh;
@@ -395,9 +399,19 @@ button.secondary {
 }
 
 .mascot-bubble.show {
+  display: block;
   opacity: 1;
   transform: translateY(0);
-  pointer-events: auto;
+  pointer-events: none;
+}
+
+.mascot-wrap.input-active .mascot-avatar-btn {
+  opacity: 0.2;
+  pointer-events: none;
+}
+
+.mascot-wrap.input-active .mascot-bubble {
+  display: none !important;
 }
 
 .mascot-avatar-btn {
@@ -410,6 +424,8 @@ button.secondary {
   padding: 0;
   cursor: grab;
   animation: mascot-bob 2.6s ease-in-out infinite;
+  pointer-events: auto;
+  touch-action: none;
 }
 
 .mascot-avatar-btn.dragging {

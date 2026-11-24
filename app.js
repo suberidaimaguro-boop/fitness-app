@@ -548,14 +548,35 @@ function showMascot(expression, message, autoHide = true, saveSource = null) {
 }
 
 let mascotDragState = null;
+let inputFocusActive = false;
 
 function applyMascotPosition(wrap) {
   const pos = state.settings.mascotPosition;
-  if (pos) {
-    wrap.style.left = `${pos.xPercent}%`; wrap.style.top = `${pos.yPercent}%`; wrap.style.right = 'auto'; wrap.style.bottom = 'auto';
-  } else {
-    wrap.style.left = 'auto'; wrap.style.right = '14px'; wrap.style.top = 'max(76px, calc(env(safe-area-inset-top, 0px) + 66px))'; wrap.style.bottom = 'auto';
+  wrap.style.left = 'auto'; wrap.style.right = 'auto'; wrap.style.top = 'auto'; wrap.style.bottom = 'auto';
+  const topPos = 'max(76px, calc(env(safe-area-inset-top, 0px) + 66px))';
+  const bottomPos = 'calc(104px + env(safe-area-inset-bottom, 0px))';
+  if (typeof pos === 'string') {
+    if (pos === 'top-left') { wrap.style.left = '14px'; wrap.style.top = topPos; }
+    else if (pos === 'bottom-right') { wrap.style.right = '14px'; wrap.style.bottom = bottomPos; }
+    else if (pos === 'bottom-left') { wrap.style.left = '14px'; wrap.style.bottom = bottomPos; }
+    else { wrap.style.right = '14px'; wrap.style.top = topPos; }
+    return;
   }
+  if (pos && typeof pos === 'object') {
+    const maxLeft = Math.max(0, window.innerWidth - wrap.offsetWidth);
+    const maxTop = Math.max(0, window.innerHeight - wrap.offsetHeight);
+    let left, top;
+    if (typeof pos.xRatio === 'number' && typeof pos.yRatio === 'number') {
+      left = pos.xRatio * maxLeft; top = pos.yRatio * maxTop;
+    } else {
+      left = ((Number(pos.xPercent) || 0) / 100) * window.innerWidth;
+      top = ((Number(pos.yPercent) || 0) / 100) * window.innerHeight;
+    }
+    wrap.style.left = `${Math.min(Math.max(0, left), maxLeft)}px`;
+    wrap.style.top = `${Math.min(Math.max(0, top), maxTop)}px`;
+    return;
+  }
+  wrap.style.right = '14px'; wrap.style.top = topPos;
 }
 
 function attachMascotDrag(btn, wrap) {
@@ -581,7 +602,9 @@ function attachMascotDrag(btn, wrap) {
     btn.classList.remove('dragging');
     if (mascotDragState.moved) {
       const rect = wrap.getBoundingClientRect();
-      state.settings.mascotPosition = { xPercent: (rect.left / window.innerWidth) * 100, yPercent: (rect.top / window.innerHeight) * 100 };
+      const maxLeft = Math.max(0, window.innerWidth - wrap.offsetWidth);
+      const maxTop = Math.max(0, window.innerHeight - wrap.offsetHeight);
+      state.settings.mascotPosition = { xRatio: maxLeft ? rect.left / maxLeft : 0, yRatio: maxTop ? rect.top / maxTop : 0 };
       saveState();
     } else {
       mascotBubbleVisible = !mascotBubbleVisible; renderMascot();
@@ -598,10 +621,11 @@ function renderMascot() {
   if (!state.settings.mascotEnabled) { wrap.innerHTML = ''; return; }
   if (typeof lastAdvice !== 'undefined' && lastAdvice && lastAdvice.tab === currentTab) { wrap.innerHTML = ''; return; }
   wrap.innerHTML = `
-    <div class="mascot-bubble ${mascotBubbleVisible ? 'show' : ''}">${formatAdviceText(mascotMessage)}</div>
+    <div class="mascot-bubble ${mascotBubbleVisible && !inputFocusActive ? 'show' : ''}">${formatAdviceText(mascotMessage)}</div>
     <button class="mascot-avatar-btn" id="mascot-avatar-btn"><img src="${getMascotImage(mascotExpression)}" alt="キャラ"></button>
   `;
   applyMascotPosition(wrap);
+  wrap.classList.toggle('input-active', inputFocusActive);
   const btn = document.getElementById('mascot-avatar-btn');
   if (btn) attachMascotDrag(btn, wrap);
 }
@@ -1534,7 +1558,7 @@ function renderSettings() {
       <div class="field"><label>キャラクターからの呼ばれ方 (敬称)</label><div class="row-3"><button type="button" class="secondary honorific-btn" data-honorific="さん" style="${state.settings.honorific === 'さん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">さん</button><button type="button" class="secondary honorific-btn" data-honorific="くん" style="${state.settings.honorific === 'くん' ? 'border-color:var(--gold); color:var(--gold);' : ''}">くん</button><button type="button" class="secondary honorific-btn" data-honorific="none" style="${state.settings.honorific === 'none' ? 'border-color:var(--gold); color:var(--gold);' : ''}">呼び捨て</button></div></div>
       <div class="field"><label>キャラの話し方</label><select id="speech-style-select">${Object.entries(SPEECH_STYLES).map(([id, s]) => `<option value="${id}" ${state.settings.speechStyle === id ? 'selected' : ''}>${s.label}</option>`).join('')}</select></div>
       ${state.settings.speechStyle === 'custom' ? `<div class="field"><label>話し方の指定（自由入力）</label><input type="text" id="speech-style-custom" value="${escapeHtml(state.settings.speechStyleCustom || '')}" placeholder="例: 関西弁で、語尾は「〜やで」"><p class="sub" style="margin:6px 0 0;">カスタムが効くのはAIの言葉です。定型の挨拶などは標準の話し方になります。</p></div><button type="button" class="secondary" id="save-speech-custom-btn" style="margin-bottom:12px;">カスタムを保存</button>` : ''}
-      <div class="field"><label>表示位置(ドラッグで変更可能)</label><button type="button" class="secondary" id="reset-mascot-position-btn">位置を右上に戻す</button></div>
+      <div class="field"><label>表示位置</label><div class="row-2" style="gap:10px;">${['top-right|右上', 'top-left|左上', 'bottom-right|右下', 'bottom-left|左下'].map(pair => { const [val, labelText] = pair.split('|'); const active = state.settings.mascotPosition === val || (val === 'top-right' && !state.settings.mascotPosition); return `<button type="button" class="secondary mascot-position-btn" data-mascot-position="${val}" style="${active ? 'border-color:var(--gold); color:var(--gold);' : ''}">${labelText}</button>`; }).join('')}</div><p class="sub" style="margin:6px 0 0;">キャラを直接ドラッグしても位置を変えられます。文字の入力中はキャラが自動で退くので、欄を邪魔しません。</p>${state.settings.mascotPosition && typeof state.settings.mascotPosition === 'object' ? '<p class="sub" style="margin:4px 0 0;">現在はドラッグで決めた位置です。四隅を選ぶとそちらへ移動します。</p>' : ''}</div>
       <div class="field"><label>使用セット</label><select id="mascot-set-select">${state.settings.mascotSets.map(s => `<option value="${s.id}" ${s.id === state.settings.activeMascotSetId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select></div>
       <div class="field"><label>セット追加</label><div class="row-2"><input type="text" id="new-set-name" placeholder="セット名(例: セットA)"><button type="button" class="secondary" id="add-mascot-set-btn">追加</button></div></div>
       <p class="section-title">画像登録 (端末内保存)</p>
@@ -1619,16 +1643,47 @@ function render() {
 function attachEvents() {
   document.querySelectorAll('[data-tab]').forEach(btn => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
   document.querySelectorAll('.field, [data-focus-scope]').forEach(scope => {
-    scope.addEventListener('click', (e) => {
-      if (e.target.closest('button, a, input, select, textarea')) return;
-      const control = scope.querySelector('input:not([type="checkbox"]):not([type="file"]):not([type="color"]):not([type="hidden"]), select, textarea');
+    const control = scope.querySelector('input:not([type="checkbox"]):not([type="file"]):not([type="color"]):not([type="hidden"]), select, textarea');
+    const label = scope.querySelector('label');
+    if (label && control && control.id && !label.htmlFor) label.htmlFor = control.id;
+    const activateControl = (openPicker) => {
       if (!control || control.disabled) return;
-      control.focus({ preventScroll: true });
-      if (control.tagName === 'SELECT' || control.type === 'date') {
-        control.click();
+      try { control.focus({ preventScroll: true }); } catch (err) { control.focus(); }
+      if (openPicker && (control.tagName === 'SELECT' || control.type === 'date')) {
+        try { if (typeof control.showPicker === 'function') control.showPicker(); else control.click(); } catch (err) { try { control.click(); } catch (e2) {} }
       } else if (control.type === 'text' || control.type === 'number') {
         try { const len = control.value.length; control.setSelectionRange(len, len); } catch (err) {}
       }
+    };
+    scope.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      if (control && (control.tagName === 'TEXTAREA' || control.type === 'text' || control.type === 'number')) activateControl(false);
+    });
+    scope.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, select, textarea')) return;
+      activateControl(true);
+    });
+  });
+  document.querySelectorAll('input, select, textarea').forEach(control => {
+    control.addEventListener('focus', () => {
+      inputFocusActive = true;
+      mascotBubbleVisible = false;
+      const wrap = document.getElementById('mascot-wrap');
+      if (wrap) {
+        wrap.classList.add('input-active');
+        const bubble = wrap.querySelector('.mascot-bubble');
+        if (bubble) bubble.classList.remove('show');
+      }
+    });
+    control.addEventListener('blur', () => {
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || !active.matches || !active.matches('input, select, textarea')) {
+          inputFocusActive = false;
+          const wrap = document.getElementById('mascot-wrap');
+          if (wrap) wrap.classList.remove('input-active');
+        }
+      }, 120);
     });
   });
   const closeAdviceBtn = document.getElementById('close-advice-btn');
@@ -1926,8 +1981,9 @@ function attachEvents() {
   if (toggleMascotEnabled) { toggleMascotEnabled.addEventListener('change', () => { state.settings.mascotEnabled = toggleMascotEnabled.checked; saveState(); render(); }); }
   const mascotSetSelect = document.getElementById('mascot-set-select');
   if (mascotSetSelect) { mascotSetSelect.addEventListener('change', () => { state.settings.activeMascotSetId = mascotSetSelect.value; saveState(); render(); }); }
-  const resetMascotPositionBtn = document.getElementById('reset-mascot-position-btn');
-  if (resetMascotPositionBtn) { resetMascotPositionBtn.addEventListener('click', () => { state.settings.mascotPosition = null; saveState(); renderMascot(); alert('右上に戻しました'); }); }
+  document.querySelectorAll('[data-mascot-position]').forEach(btn => {
+    btn.addEventListener('click', () => { state.settings.mascotPosition = btn.dataset.mascotPosition; saveState(); render(); });
+  });
   const addMascotSetBtn = document.getElementById('add-mascot-set-btn');
   if (addMascotSetBtn) {
     addMascotSetBtn.addEventListener('click', () => {
