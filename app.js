@@ -97,7 +97,7 @@ function todayKey() {
 }
 
 let activeLogDate = todayKey();
-let favListOpen = false;
+let favListOpen = true;
 let photoSectionOpen = false;
 let exerciseListOpen = false;
 let themeAccentOpen = false;
@@ -826,12 +826,77 @@ function toGuessNumber(v) {
   if (nums.length >= 2) return (Number(nums[0]) + Number(nums[1])) / 2;
   return Number(nums[0]);
 }
+function recallKey(s) {
+  return normalizeFoodName(s).replace(/（[^）]*）$/, '').replace(/\([^)]*\)$/, '');
+}
 function findMealRecall(name) {
-  const sameName = [...state.meals].reverse().filter(m => m.name === name);
+  const key = recallKey(name);
+  if (!key) return { calories: null, protein: null, fat: null, carbs: null };
+  const sameName = [...state.meals].reverse().filter(m => recallKey(m.name) === key);
   if (!sameName.length) return { calories: null, protein: null, fat: null, carbs: null };
   const latestWith = key => { const rec = sameName.find(m => m[key] !== undefined && m[key] !== null); return rec ? rec[key] : null; };
   return { calories: sameName[0].calories, protein: latestWith('protein'), fat: latestWith('fat'), carbs: latestWith('carbs') };
 }
+/* ===== v40: 内蔵食品データ (日本食品標準成分表ベースの目安) ===== */
+const FOOD_DB = [
+  { name: 'サラダチキン', serving: '1個（約110g）', calories: 125, protein: 26, fat: 2, carbs: 1, keys: ['サラダチキン'] },
+  { name: 'ゆで卵', serving: '1個（約50g）', calories: 71, protein: 6, fat: 5, carbs: 0, keys: ['ゆで卵', '茹で卵', '煮卵'] },
+  { name: 'ザバス ミルクプロテイン', serving: '200ml', calories: 102, protein: 15, fat: 0, carbs: 11, keys: ['ザバス', 'savas', 'ミルクプロテイン'] },
+  { name: 'ご飯', serving: '1杯（150g）', calories: 234, protein: 4, fat: 0, carbs: 56, keys: ['ご飯', '白米', '白ごはん', 'ライス', 'ごはん'], exactOnly: true },
+  { name: '鶏むね肉（皮なし）', serving: '100g', calories: 105, protein: 23, fat: 2, carbs: 0, keys: ['鶏むね肉', '鶏胸肉', 'とりむね肉', 'むね肉'] },
+  { name: '鶏もも肉（皮なし）', serving: '100g', calories: 116, protein: 22, fat: 4, carbs: 0, keys: ['鶏もも肉', '鶏腿肉', 'もも肉'] },
+  { name: '豚バラ肉', serving: '100g', calories: 386, protein: 14, fat: 35, carbs: 0, keys: ['豚バラ'] },
+  { name: '豚ロース肉', serving: '100g', calories: 263, protein: 19, fat: 19, carbs: 0, keys: ['豚ロース'] },
+  { name: '牛乳', serving: '200ml', calories: 134, protein: 7, fat: 8, carbs: 10, keys: ['牛乳'] },
+  { name: '納豆', serving: '1パック（45g）', calories: 86, protein: 7, fat: 5, carbs: 5, keys: ['納豆'] },
+  { name: '木綿豆腐', serving: '100g', calories: 73, protein: 7, fat: 4, carbs: 2, keys: ['木綿豆腐', '豆腐'] },
+  { name: 'ツナ缶（油漬け）', serving: '1缶（70g）', calories: 203, protein: 12, fat: 17, carbs: 0, keys: ['ツナ缶', 'シーチキン', 'ツナ'] },
+  { name: 'プレーンヨーグルト（無糖）', serving: '100g', calories: 62, protein: 4, fat: 3, carbs: 5, keys: ['ヨーグルト'] },
+  { name: '味噌汁', serving: '1杯', calories: 40, protein: 2, fat: 1, carbs: 5, keys: ['味噌汁', 'みそ汁'] },
+  { name: 'バナナ', serving: '1本（約100g）', calories: 93, protein: 1, fat: 0, carbs: 23, keys: ['バナナ'] },
+  { name: 'りんご', serving: '1個（約250g）', calories: 135, protein: 0, fat: 1, carbs: 36, keys: ['りんご', 'リンゴ'] },
+  { name: '食パン', serving: '6枚切り1枚（60g）', calories: 149, protein: 6, fat: 3, carbs: 28, keys: ['食パン'] },
+  { name: '焼き鮭', serving: '1切れ（80g）', calories: 106, protein: 18, fat: 3, carbs: 0, keys: ['焼き鮭', '鮭の塩焼き', '鮭', 'サーモン'] },
+  { name: 'かけうどん', serving: '1玉', calories: 270, protein: 7, fat: 1, carbs: 56, keys: ['うどん'] },
+  { name: 'かけそば', serving: '1人前', calories: 280, protein: 11, fat: 2, carbs: 54, keys: ['そば', '蕎麦'] },
+  { name: 'カレーライス', serving: '1皿', calories: 750, protein: 18, fat: 28, carbs: 105, keys: ['カレーライス', 'カレー'] },
+  { name: 'ラーメン（醤油）', serving: '1杯', calories: 480, protein: 17, fat: 12, carbs: 70, keys: ['ラーメン', 'らーめん'] },
+  { name: 'ハンバーグ', serving: '1個（約120g）', calories: 300, protein: 16, fat: 22, carbs: 9, keys: ['ハンバーグ'] },
+  { name: '鶏の唐揚げ', serving: '1個（約30g）', calories: 85, protein: 4, fat: 6, carbs: 3, keys: ['唐揚げ', 'からあげ', 'から揚げ'] },
+  { name: '焼き餃子', serving: '1個', calories: 60, protein: 2, fat: 3, carbs: 6, keys: ['餃子', 'ギョーザ', 'ぎょうざ'] }
+];
+function normalizeFoodName(s) {
+  return String(s || '').replace(/[\s　]/g, '').toLowerCase();
+}
+function parseFoodQuantity(raw) {
+  let base = normalizeFoodName(raw);
+  let qty = 1;
+  if (base.includes('半分')) { qty = 0.5; base = base.replace('半分', ''); }
+  const m = base.match(/^(.*?)(?:×|x|\*|＊)?([0-9０-９]+(?:\.[0-9]+)?)(個|杯|人前|食|パック|本|枚|切れ|缶|玉)$/);
+  if (m && m[1]) {
+    const n = toGuessNumber(m[2]);
+    if (n !== null && n > 0 && n <= 20) { qty = n; base = m[1]; }
+  }
+  return { base, qty };
+}
+function findFoodDB(rawName) {
+  const { base, qty } = parseFoodQuantity(rawName);
+  if (!base) return null;
+  let best = null;
+  let bestScore = -1;
+  for (const entry of FOOD_DB) {
+    for (const key of entry.keys) {
+      const k = normalizeFoodName(key);
+      let score = -1;
+      if (base === k) score = 100 + k.length;
+      else if (!entry.exactOnly && base.startsWith(k)) score = 50 + k.length;
+      else if (!entry.exactOnly && base.includes(k)) score = 10 + k.length;
+      if (score > bestScore) { bestScore = score; best = entry; }
+    }
+  }
+  return best ? Object.assign({}, best, { qty }) : null;
+}
+
 function parseGuessResponse(text) {
   if (!text) return null;
   const m = String(text).match(/\{[\s\S]*\}/);
@@ -850,7 +915,7 @@ function parseGuessResponse(text) {
 }
 async function fetchGeminiTextGuess(name) {
   if (!state.settings.geminiApiKey) return null;
-  const prompt = `料理名「${name}」について、一般的な1人前の栄養成分を推測してください。丼もの・定食はご飯を含む1人前としてください。値は必ず単一の数値で答え、単位・「約」・幅(〜)は付けないでください。{"calories": 650, "protein_g": 38, "fat_g": 12, "carbs_g": 85} のように、キーと数値だけのJSONを返してください。説明文は一切付けないでください。`;
+  const prompt = `料理名「${name}」について、一般的な1人前の栄養成分を推測してください。丼もの・定食はご飯を含む1人前としてください。目安の基準: サラダチキン1個(約110g)=125kcal・たんぱく質26g、ご飯1杯(150g)=234kcal、ゆで卵1個=71kcal・たんぱく質6g、鶏むね肉(皮なし)100g=105kcal・たんぱく質23g。これらに近い食品は基準に寄せてください。値は必ず単一の数値で答え、単位・「約」・幅(〜)は付けないでください。{"calories": 650, "protein_g": 38, "fat_g": 12, "carbs_g": 85} のように、キーと数値だけのJSONを返してください。説明文は一切付けないでください。`;
   const result = await callGeminiGenerate([{ text: prompt }], { temperature: 0.2, response_mime_type: 'application/json' });
   return result.error ? null : result.text;
 }
@@ -1345,7 +1410,14 @@ function renderWorkout() {
   `;
 }
 
-let selectedMealCategory = '朝食';
+function categoryForCurrentTime(date = new Date()) {
+  const h = date.getHours();
+  if (h >= 5 && h < 11) return '朝食';
+  if (h >= 11 && h < 16) return '昼食';
+  if (h >= 18 && h < 23) return '夜ご飯';
+  return '間食';
+}
+let selectedMealCategory = categoryForCurrentTime();
 const MEAL_CATEGORIES = ['朝食', '昼食', '間食', '夜ご飯'];
 
 function fileToBase64Raw(file) {
@@ -1415,6 +1487,11 @@ function renderMeal() {
     </div>
     ${activeLogDate === todayKey() ? renderRemainingStrip() : ''}
     <div class="field"><label>区分</label><select id="meal-category-select">${MEAL_CATEGORIES.map(c => `<option value="${c}" ${c === selectedMealCategory ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+    <button type="button" class="accordion-toggle" id="fav-toggle-btn" style="margin-top:2px;">
+      <span><i class="ti ti-star"></i> よく食べるもの（タップで即記録） (${state.favoriteMeals.length})</span>
+      <i class="ti ${favListOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
+    </button>
+    ${favListOpen ? `<div class="chip-row" style="margin-bottom:14px;">${favoriteChips || '<span class="sub" style="padding:6px;">登録がありません</span>'}</div>` : ''}
     <div class="field">
       <label>食べたもの</label>
       <input type="text" id="meal-name" list="meal-history-list" placeholder="鶏むね肉のサラダ">
@@ -1430,7 +1507,8 @@ function renderMeal() {
       <div class="field"><label><span style="color:var(--c-fat);">●</span> 脂質 (g)</label><input type="number" id="meal-fat" inputmode="decimal" placeholder="15"></div>
       <div class="field"><label><span style="color:var(--c-carbs);">●</span> 炭水化物 (g)</label><input type="number" id="meal-carbs" inputmode="decimal" placeholder="50"></div>
     </div>
-    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からAIカロリー・PFC推測</button>
+    <div class="field" style="margin-bottom:8px;"><label>推測する量の目安</label><select id="guess-portion"><option value="0.8">少なめ（×0.8）</option><option value="1" selected>普通・1人前（×1.0）</option><option value="1.3">多め（×1.3）</option></select></div>
+    <button type="button" class="secondary" id="ai-guess-meal-btn" style="margin-bottom:12px;">✨ 文字からカロリー・PFC推測（記録・内蔵データ優先）</button>
     <div id="ai-guess-status" style="font-size:12px; color:var(--text-secondary); margin:-4px 0 12px;"></div>
     <button class="primary" id="add-meal-btn">記録を追加</button>
     <button class="secondary" id="save-favorite-btn" style="margin-bottom:12px;">☆ 今の内容を「よく食べるもの」に登録</button>
@@ -1439,11 +1517,6 @@ function renderMeal() {
     ${groups || `<div class="empty-hint">この日の記録はまだありません</div>`}
     <div class="list-card" style="margin-top:12px;"><div class="total-row"><span class="label">合計</span><span class="value">${total.toLocaleString()} / ${state.goals.dailyCalorieTarget.toLocaleString()} kcal</span></div>${(proteinTotal > 0 || fatTotal > 0 || carbsTotal > 0) ? `<div class="total-row"><span class="label">PFC合計</span><span class="value"><span style="color:var(--c-protein);">P${proteinTotal}g</span> / <span style="color:var(--c-fat);">F${fatTotal}g</span> / <span style="color:var(--c-carbs);">C${carbsTotal}g</span></span></div>` : ''}</div>
 
-    <button type="button" class="accordion-toggle" id="fav-toggle-btn" style="margin-top:16px;">
-      <span><i class="ti ti-star"></i> よく食べるものリスト (${state.favoriteMeals.length})</span>
-      <i class="ti ${favListOpen ? 'ti-chevron-up' : 'ti-chevron-down'}"></i>
-    </button>
-    ${favListOpen ? `<div class="chip-row" style="margin-bottom:16px;">${favoriteChips || '<span class="sub" style="padding:6px;">登録がありません</span>'}</div>` : ''}
 
     <button type="button" class="accordion-toggle" id="photo-toggle-btn">
       <span><i class="ti ti-camera"></i> 写真から入力 (料理 / 成分表示)</span>
@@ -1896,6 +1969,8 @@ function attachEvents() {
       const carbsInput = document.getElementById('meal-carbs');
       if (carbsInput && result.carbs !== null && result.carbs !== undefined) carbsInput.value = result.carbs;
       if (statusEl) statusEl.textContent = `判定結果を入力しました: ${result.name} (約${result.calories}kcal${result.protein ? ` / たんぱく質約${result.protein}g` : ''}${result.fat ? ` / 脂質約${result.fat}g` : ''}${result.carbs ? ` / 炭水化物約${result.carbs}g` : ''})${result.note ? ` ※${result.note}` : ''} ※量は写真からの推定です。記録前に数字を確認してください`;
+      const dbRef = (typeof findFoodDB === 'function') ? findFoodDB(result.name) : null;
+      if (statusEl && dbRef && result.calories && Math.abs(result.calories - dbRef.calories) / dbRef.calories > 0.35) statusEl.textContent += ` ※内蔵データ(${dbRef.name} ${dbRef.serving})では約${dbRef.calories}kcal・たんぱく質約${dbRef.protein}gです。写真の量と合っているか確認してください。`;
     });
   }
 
@@ -2073,10 +2148,41 @@ function attachEvents() {
       const setStatus = t => { if (statusEl) statusEl.textContent = t; };
       const setVal = (id, v) => { const el = document.getElementById(id); if (el && v !== null && v !== undefined) el.value = Math.round(v); };
       if (!name) { alert('先に食べたものを入力してください'); return; }
+      const portionEl = document.getElementById('guess-portion');
+      const portion = portionEl ? (Number(portionEl.value) || 1) : 1;
+      const portionNote = portion !== 1 ? ` (量 ${portion < 1 ? '少なめ' : '多め'} ×${portion})` : '';
+      const fillGuess = (vals, statusText) => {
+        document.getElementById('meal-calories').value = vals.calories;
+        setVal('meal-protein', vals.protein); setVal('meal-fat', vals.fat); setVal('meal-carbs', vals.carbs);
+        setStatus(statusText);
+      };
+      const pv = v => (v !== null && v !== undefined) ? Math.round(v) : '?';
+      const recallFirst = (typeof findMealRecall === 'function') ? findMealRecall(name) : null;
+      if (recallFirst && recallFirst.calories !== null && recallFirst.calories !== undefined) {
+        fillGuess(recallFirst, `過去のあなたの記録から入力しました: ${recallFirst.calories}kcal / P${pv(recallFirst.protein)}g / F${pv(recallFirst.fat)}g / C${pv(recallFirst.carbs)}g ※前回と同じ量なら、この数字が一番確実です`);
+        return;
+      }
+      const qtyParsed = (typeof parseFoodQuantity === 'function') ? parseFoodQuantity(name) : null;
+      if (qtyParsed && qtyParsed.qty !== 1) {
+        const baseRecall = findMealRecall(qtyParsed.base);
+        if (baseRecall && baseRecall.calories !== null && baseRecall.calories !== undefined) {
+          const sc = v => (v === null || v === undefined) ? null : Math.round(v * qtyParsed.qty);
+          const vals = { calories: Math.round(baseRecall.calories * qtyParsed.qty), protein: sc(baseRecall.protein), fat: sc(baseRecall.fat), carbs: sc(baseRecall.carbs) };
+          fillGuess(vals, `過去のあなたの記録から入力しました (×${qtyParsed.qty}に換算): ${vals.calories}kcal / P${pv(vals.protein)}g / F${pv(vals.fat)}g / C${pv(vals.carbs)}g ※前回と同じものなら、この数字が一番確実です`);
+          return;
+        }
+      }
+      const dbHit = (typeof findFoodDB === 'function') ? findFoodDB(name) : null;
+      if (dbHit) {
+        const scale = dbHit.qty * portion;
+        const vals = { calories: Math.round(dbHit.calories * scale), protein: Math.round(dbHit.protein * scale), fat: Math.round(dbHit.fat * scale), carbs: Math.round(dbHit.carbs * scale) };
+        fillGuess(vals, `内蔵データ(食品成分表ベース)から入力しました: ${dbHit.name} ${dbHit.serving}${dbHit.qty !== 1 ? ` ×${dbHit.qty}` : ''}${portionNote} = ${vals.calories}kcal / P${vals.protein}g / F${vals.fat}g / C${vals.carbs}g`);
+        return;
+      }
       if (!state.settings.groqApiKey && !state.settings.geminiApiKey) { alert('設定画面からGroqまたはGeminiのAPIキーを登録してください'); return; }
       const prevText = aiGuessBtn.textContent; aiGuessBtn.textContent = '推測中...'; aiGuessBtn.disabled = true;
       setStatus('AIが推測中…');
-      const basePrompt = `料理名「${name}」について、一般的な1人前の栄養成分を推測してください。丼もの・定食はご飯を含む1人前としてください。値は必ず単一の数値で答え、単位・「約」・幅(〜)は付けないでください。{"calories": 650, "protein_g": 38, "fat_g": 12, "carbs_g": 85} のように、キーと数値だけのJSONを返してください。説明文は一切付けないでください。`;
+      const basePrompt = `料理名「${name}」について、一般的な1人前の栄養成分を推測してください。丼もの・定食はご飯を含む1人前としてください。目安の基準: サラダチキン1個(約110g)=125kcal・たんぱく質26g、ご飯1杯(150g)=234kcal、ゆで卵1個=71kcal・たんぱく質6g、鶏むね肉(皮なし)100g=105kcal・たんぱく質23g。これらに近い食品は基準に寄せてください。値は必ず単一の数値で答え、単位・「約」・幅(〜)は付けないでください。{"calories": 650, "protein_g": 38, "fat_g": 12, "carbs_g": 85} のように、キーと数値だけのJSONを返してください。説明文は一切付けないでください。`;
       let guess = null; let source = ''; let rawSnippet = '';
       if (state.settings.groqApiKey) {
         const resText = await fetchGroqComment(basePrompt, { jsonOnly: true, maxTokens: 400 });
@@ -2095,10 +2201,9 @@ function attachEvents() {
       }
       aiGuessBtn.textContent = prevText; aiGuessBtn.disabled = false;
       if (guess) {
-        document.getElementById('meal-calories').value = guess.calories;
-        setVal('meal-protein', guess.protein); setVal('meal-fat', guess.fat); setVal('meal-carbs', guess.carbs);
-        const pv = v => (v !== null && v !== undefined) ? Math.round(v) : '?';
-        setStatus(`推測しました (${source}): ${guess.calories}kcal / P${pv(guess.protein)}g / F${pv(guess.fat)}g / C${pv(guess.carbs)}g ※一般的な1人前の推定です。量が違う場合は直してください`);
+        const scaleV = v => (v === null || v === undefined) ? null : Math.round(v * portion);
+        const scaled = { calories: Math.round(guess.calories * portion), protein: scaleV(guess.protein), fat: scaleV(guess.fat), carbs: scaleV(guess.carbs) };
+        fillGuess(scaled, `推測しました (${source})${portionNote}: ${scaled.calories}kcal / P${pv(scaled.protein)}g / F${pv(scaled.fat)}g / C${pv(scaled.carbs)}g ※一般的な1人前の推定です。よく食べるものは、一度手で直して「よく食べるもの」に登録すると次から正確になります`);
         return;
       }
       const recall = (typeof findMealRecall === 'function') ? findMealRecall(name) : null;
